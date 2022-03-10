@@ -343,6 +343,7 @@ vmspace_alloc(vm_offset_t min, vm_offset_t max, pmap_pinit_t pinit)
 	vm->vm_taddr = 0;
 	vm->vm_daddr = 0;
 	vm->vm_maxsaddr = 0;
+	vm->vm_stkgap = 0;
 	return (vm);
 }
 
@@ -1013,7 +1014,7 @@ vm_map_entry_max_free_right(vm_map_entry_t root, vm_map_entry_t right_ancestor)
  *	in the appropriate direction and backtracking as much as necessary.
  *	vm_map_entry_succ is defined in vm_map.h.
  */
-static inline vm_map_entry_t
+vm_map_entry_t
 vm_map_entry_pred(vm_map_entry_t entry)
 {
 	vm_map_entry_t prior;
@@ -2429,7 +2430,7 @@ vm_map_entry_clone(vm_map_t map, vm_map_entry_t entry)
  *	the specified address; if necessary,
  *	it splits the entry into two.
  */
-static int
+int
 vm_map_clip_start(vm_map_t map, vm_map_entry_t entry, vm_offset_t startaddr)
 {
 	vm_map_entry_t new_entry;
@@ -2503,7 +2504,7 @@ vm_map_lookup_clip_start(vm_map_t map, vm_offset_t start,
  *	the specified address; if necessary,
  *	it splits the entry into two.
  */
-static int
+int
 vm_map_clip_end(vm_map_t map, vm_map_entry_t entry, vm_offset_t endaddr)
 {
 	vm_map_entry_t new_entry;
@@ -4265,6 +4266,7 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 	vm2->vm_taddr = vm1->vm_taddr;
 	vm2->vm_daddr = vm1->vm_daddr;
 	vm2->vm_maxsaddr = vm1->vm_maxsaddr;
+	vm2->vm_stkgap = vm1->vm_stkgap;
 	vm_map_lock(old_map);
 	if (old_map->busy)
 		vm_map_wait_busy(old_map);

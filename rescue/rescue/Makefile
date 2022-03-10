@@ -6,7 +6,12 @@
 PACKAGE=rescue
 MAN=
 MK_SSP=	no
+# Static-PIE is not supported so we should not be linking against _pie.a libs.
+# This is also needed to avoid linking against sanitizer-instrumented libraries
+# since MK_ASAN/MK_UBSAN will instrument the .pieo object files.
+MK_PIE=	no
 NO_SHARED=	yes
+CRUNCH_BUILDOPTS+=	MK_PIE=no NO_SHARED=yes
 
 PROG=	rescue
 BINDIR?=/rescue
@@ -52,7 +57,7 @@ CRUNCH_LIBS+= ${.OBJDIR}/../librescue/*.o
 #
 CRUNCH_SRCDIRS+= bin
 CRUNCH_PROGS_bin= cat chflags chio chmod cp date dd df echo 	\
-	 ed expr getfacl hostname kenv kill launchctl ln ls mkdir mv	\
+	 ed expr getfacl hostname kenv kill ln ls mkdir mv	\
 	 pkill ps pwd realpath rm rmdir setfacl sh sleep stty	\
 	 sync test
 CRUNCH_LIBS+= -lcrypt -ledit -ljail -lkvm -lelf -ltermcapw -lutil -lxo
@@ -232,10 +237,6 @@ CRUNCH_LIBS+= -lm
 CRUNCH_PROGS_usr.bin+=	iscsictl
 CRUNCH_PROGS_usr.sbin+=	iscsid
 .endif
-
-CRUNCH_SRCDIRS+= libexec
-CRUNCH_PROGS_libexec+= launchproxy
-CRUNCH_LIBS+= -ljansson -llaunch -ldispatch -losxsupport -lBlocksRuntime -lutil
 
 .include <bsd.crunchgen.mk>
 .include <bsd.prog.mk>

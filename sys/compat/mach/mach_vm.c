@@ -1,5 +1,6 @@
 /*-
  * Copyright (c) 2014-2015, Matthew Macy <mmacy@nextbsd.org>
+ * Copyright (c) 2021-2022 Zoe Knox <zoe@pixin.net>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -62,36 +63,6 @@ __FBSDID("$FreeBSD$");
 
 
 extern vm_size_t	msg_ool_size_small;
-void _vm_map_clip_end(vm_map_t map, vm_map_entry_t entry, vm_offset_t end);
-void _vm_map_clip_start(vm_map_t map, vm_map_entry_t entry, vm_offset_t start);
-
-
-/*
- *	vm_map_clip_start:	[ internal use only ]
- *
- *	Asserts that the given entry begins at or after
- *	the specified address; if necessary,
- *	it splits the entry into two.
- */
-#define vm_map_clip_start(map, entry, startaddr) \
-{ \
-	if (startaddr > entry->start) \
-		_vm_map_clip_start(map, entry, startaddr); \
-}
-
-/*
- *	vm_map_clip_end:	[ internal use only ]
- *
- *	Asserts that the given entry ends at or before
- *	the specified address; if necessary,
- *	it splits the entry into two.
- */
-#define vm_map_clip_end(map, entry, endaddr) \
-{ \
-	if ((endaddr) < (entry->end)) \
-		_vm_map_clip_end((map), (entry), (endaddr)); \
-}
-
 
 int mach_vm_map_page_query(vm_map_t target_map, vm_offset_t offset, integer_t *disposition, integer_t *ref_count);
 int mach_vm_mapped_pages_info(vm_map_t task, page_address_array_t *pages, mach_msg_type_number_t *pagesCnt);
@@ -711,7 +682,7 @@ kern_return_t	vm_map_copyin(
 					 * entry contains the actual
 					 * vm_object/offset.
 					 */
-	vm_map_entry_t	next_entry;
+	vm_map_entry_t	prev_entry, next_entry;
 	vm_object_t object;
 	vm_offset_t prev_end;
 
@@ -776,7 +747,9 @@ kern_return_t	vm_map_copyin(
 	prev_end = 0;
 	while (prev_end != tmp_entry->end  && tmp_entry->end < src_end) {
 		prev_end = tmp_entry->end;
+        prev_entry = vm_map_entry_pred(tmp_entry);
 		next_entry = vm_map_entry_succ(tmp_entry);
+        vm_map_try_merge_entries(src_map, prev_entry, tmp_entry);
 		vm_map_try_merge_entries(src_map, tmp_entry, next_entry);
 	}
 	/* only handle single map entry for now */

@@ -1,12 +1,16 @@
-#!/bin/bash
+#!/usr/bin/bash
 
 set -e
 set -x
 
+tar -C "${uzip}" -xvf /usr/ports/packages/drm-fbsd13-kmod-5.4.144.g20220128.pkg
+tar -C "${uzip}" -xvf /usr/ports/packages/drm-kmod-g20190710_1.pkg
+tar -C "${uzip}" -xvf /usr/ports/packages/gpu-firmware-kmod-g20210330.pkg
+exit 0
+
 mkdir -p /tmp/system-overlay 
 cd /tmp/system-overlay
 
-#curl -L -o "${uzip}"/usr/share/slim/themes/default/background.jpg "https://github.com/helloSystem/ISO/releases/download/assets/graphite.jpg"
 cp -f "${uzip}"/usr/share/plasma/look-and-feel/Airyx/contents/splash/images/marmoset.png "${uzip}"/usr/share/slim/themes/default/background.jpg
 
 # Use blue folder icons instead of the ones packaged in FreeBSD which have yellow folder icons
@@ -22,6 +26,10 @@ ln -sf "elementary" "${uzip}/usr/share/icons/elementary-xfce"
 mv ./usr/share/doc/xubuntu-icon-theme/copyright "${uzip}"/usr/share/icons/elementary/
 cd -
 rm -r $icons_temp
+
+curl -Lo - https://dl.cloudsmith.io/public/airyx/13_0/raw/files/gnome-icon-theme-3.12.0_1.pkg | tar xvf - -C "${uzip}"
+curl -Lo - https://dl.cloudsmith.io/public/airyx/13_0/raw/files/gnome-icon-theme-symbolic-3.12.0.pkg | tar xvf - -C "${uzip}"
+( cd "${uzip}/usr/share/icons/" ; ln -s Adwaita adwaita )
 
 # Cursor theme with HiDPi Support, sizes: 22 24 28 32 40 48 56 64 72 80 88 96
 fetch https://github.com/ful1e5/apple_cursor/releases/download/v1.0.6/macOSBigSur.tar.gz
@@ -42,7 +50,7 @@ curl -Lo - https://github.com/mszoek/airyx/releases/download/jdk-17.0.1/openjdk-
 mkdir -p "${uzip}/Applications/Utilities"
 
 declare -A apps utils
-apps=(Kate 21.08.1 Firefox 93.0)
+apps=(Kate 21.08.1 Firefox 97.0)
 utils=(Terminal 0.17.0)
 
 for app in ${!apps[@]}; do

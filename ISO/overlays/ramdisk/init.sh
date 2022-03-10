@@ -36,8 +36,6 @@ mount -u -w /
 
 echo "==> Make mountpoints"
 mkdir -p /cdrom
-mkdir -p /sysroot
-mkdir -p /memdisk
 
 echo "Waiting for Live media to appear"
 while : ; do
@@ -54,42 +52,84 @@ mdconfig -u 1 -f /cdrom/data/system.uzip
 echo "==> Importing ZFS pool"
 zpool import furybsd -o readonly=on
 
-if [ "$SINGLE_USER" = "true" ]; then
-	echo -n "Enter memdisk size used for read-write access in the live system: "
-	read MEMDISK_SIZE
-else
-	MEMDISK_SIZE="2048"
-fi
-
-echo "==> Mount unionfs"
-mdmfs -s "${MEMDISK_SIZE}m" md /memdisk || exit 1
-mount -t unionfs -o noatime -o copymode=transparent /memdisk /sysroot
-
-echo "==> Mount /sysroot/sysroot/boot" # https://github.com/helloSystem/ISO/issues/4#issuecomment-800636914
-mkdir -p /sysroot/sysroot/boot
-mount -t nullfs /sysroot/boot /sysroot/sysroot/boot
-
-echo "==> Mounting tmpfs on /tmp"
-mount -t tmpfs tmpfs /sysroot/tmp
-
-echo "==> Change into /sysroot"
-mount -t devfs devfs /sysroot/dev
 echo "Setting up the live environment..." > /dev/tty
-chroot /sysroot /usr/bin/furybsd-init-helper
 
-if [ "$SINGLE_USER" = "true" ]; then
-        echo "Starting interactive shell after chroot ..."
-        sh
-fi
+echo "==> Mounting /tmp and /proc"
+mkdir /tmp /proc
+mount -t tmpfs tmpfs /tmp
+chmod 1777 /tmp
+mount -t procfs procfs /proc
 
-kenv init_path="/rescue/init"
-kenv init_shell="/rescue/sh"
-kenv init_script="/init.sh"
-kenv init_chroot="/sysroot"
+echo "==> Creating root symlinks"
+mkdir /root /mnt /media /Volumes /System /System/Library /boot /compat /compat/linux
+for d in bin sbin lib libexec usr Applications Library; do
+	ln -s /sysroot/$d /$d
+done
 
-echo "==> Set kernel module path for chroot"
-sysctl kern.module_path=/sysroot/boot/kernel
-        
+echo "==> Populating etc and var"
+mkdir -p /etc /var
+mount -t tmpfs tmpfs /etc
+mount -t tmpfs tmpfs /var
+mount -t tmpfs tmpfs /boot
+tar -C /sysroot/etc -cpf - . | tar -C /etc -xf -
+tar -C /sysroot/var -cpf - . | tar -C /var -xf -
+chmod 1777 /var/tmp
+
+cat > /etc/bootstrap <<EOT
+#!/rescue/sh
+
+rm -f /var/run/nologin
+EOT
+chmod 755 /etc/bootstrap
+
+mkdir /private
+for d in dev etc var; do
+    ln -sf /$d /private/$d
+done
+
+echo "==> Populating /System/Library"
+CWD=$(pwd)
+cd /sysroot/System/Library
+for d in *; do
+    ln -s "/sysroot/System/Library/$d" "/System/Library/$d"
+done
+rm -f /System/Library/LaunchDaemons
+mkdir -p /System/Library/LaunchDaemons
+ln -s /sysroot/System/Library/LaunchDaemons/com.apple.auditd.json /System/Library/LaunchDaemons/
+ln -s /sysroot/System/Library/LaunchDaemons/com.apple.notifyd.json /System/Library/LaunchDaemons/
+for tty in 0 1 2 3; do
+    cat > /System/Library/LaunchDaemons/org.freebsd.ttyv${tty}.json <<EOT
+{
+	"Label": "org.freebsd.getty.ttyv${tty}",
+	"ProgramArguments": [
+		"/usr/libexec/getty",
+		"Pc",
+		"ttyv${tty}"
+	],
+	"RunAtLoad": true,
+	"KeepAlive": true
+}
+EOT
+done
+
+cd /sysroot/boot
+for d in *; do
+    ln -s /sysroot/boot/$d /boot/$d
+done
+rm -f /boot/entropy
+cd $CWD
+
+echo "==> User directory"
+mkdir -p /Users/liveuser
+mount -t tmpfs tmpfs /Users/liveuser
+tar -C /sysroot/Users/liveuser -cpf - . | tar -C /Users/liveuser -xf -
+
+echo "==> Loading important modules"
+for mod in ums utouch firewire; do
+	echo -n "$mod "; kldload $mod
+done
+
+/usr/bin/furybsd-init-helper
+
 echo "==> Exit ramdisk init.sh"
 exit 0
-

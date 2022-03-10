@@ -54,6 +54,13 @@ CANCELPOINTS_CFLAGS=-fexceptions
 CFLAGS+=${CANCELPOINTS_CFLAGS}
 .endif
 
+# Use a more efficient TLS model for libc since we can reasonably assume that
+# it will be loaded during program startup.
+.if ${LIBC_ARCH} == "aarch64" || ${LIBC_ARCH} == "amd64" || \
+    ${LIBC_ARCH} == "i386" || ${LIBC_ARCH} == "riscv"
+CFLAGS+= -ftls-model=initial-exec
+.endif
+
 #
 # Link with static libcompiler_rt.a.
 #
@@ -96,7 +103,7 @@ NOASM=
 .include "${LIBC_SRCTOP}/inet/Makefile.inc"
 .include "${LIBC_SRCTOP}/isc/Makefile.inc"
 .include "${LIBC_SRCTOP}/locale/Makefile.inc"
-.include "${LIBC_SRCTOP}/mach/Makefile.inc"
+#.include "${LIBC_SRCTOP}/mach/Makefile.inc"
 .include "${LIBC_SRCTOP}/md/Makefile.inc"
 .include "${LIBC_SRCTOP}/nameser/Makefile.inc"
 .include "${LIBC_SRCTOP}/net/Makefile.inc"

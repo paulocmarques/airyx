@@ -1,11 +1,10 @@
 compute_engine_instance:
   image_project: airyxos-images
-  image: airyxbuild-0-4-b3
+  image: airyxbuild-0-4-b6
   platform: freebsd
   cpu: 8
   memory: 16G
-  disk: 100
-
+  disk: 80
 
 
 airyx_task:
@@ -26,20 +25,18 @@ airyx_task:
   setup_script:
     - rm -fv /etc/pkg/FreeBSD.conf
     - cp -fv etc/pkg/Airyx.conf /etc/pkg/
-    - pkg update
+    - pkg-static install -yf pkg && pkg update
+    - pkg fetch -y -o /tmp binutils
+    - tar xvf /tmp/binutils-*.pkg -C / /usr/bin/as
     - pkg install -fy python38 python3 py38-pip py38-setuptools
     - pkg install -y cmake jpeg-turbo openjpeg tiff png cairo fontconfig freetype2 libX11 libXext libXfixes libXdamage mesa-libs dbus pkgconf libqtxdg sqlite3 git-tiny qt5-buildtools qt5-qmake qt5-dbus qt5-linguisttools qt5-widgets qt5-x11extras qt5-dbus glib dbus-glib libffi libfm libfm-qt menu-cache gettext-runtime icu kf5-extra-cmake-modules lxqt-build-tools kf5-ki18n kf5-plasma-framework kf5-ktexteditor qt5-testlib gmake autoconf zip bash alsa-lib alsa-plugins
     - pip install --upgrade cloudsmith-cli
-  base_cache:
-    folder: /usr/obj
   base_build_script:
     - mkdir -p /usr/obj/$(pwd -P)
     - make -j$(sysctl -n hw.ncpu) MK_LIB32=no buildworld buildkernel
     - make -C release MK_LIB32=no NOSRC=true NOPORTS=true packagesystem
     - cloudsmith push raw -k $KEY airyx/core --name base_${CIRRUS_BRANCH%/*}.txz /usr/obj/$(pwd -P)/$(uname -m).$(uname -m)/release/base.txz
     - cloudsmith push raw -k $KEY airyx/core --name kernel_${CIRRUS_BRANCH%/*}.txz /usr/obj/$(pwd -P)/$(uname -m).$(uname -m)/release/kernel.txz
-  upload_caches:
-    - base
   system_build_script:
     - make -f Makefile.airyx prep
     - cp -fv share/mk/* /usr/share/mk/
@@ -47,11 +44,15 @@ airyx_task:
     - rm -f dist/airyx.txz
     - make -f Makefile.airyx airyx-package
   iso_script:
-    - pkg install -y sshpass bash
-    - ln -sf /usr/local/bin/bash /bin/bash
+    - pkg install -y sshpass bash megacmd openssl
+    - ln -sf /usr/bin/bash /bin/bash
     - cp -fv version.txt ISO/overlays/ramdisk/version
+    - mkdir -p /usr/local/furybsd/$(uname -m)/cache/$(head -1 version.txt)/base
+    - cp -fv /usr/obj/$(pwd -P)/$(uname -m).$(uname -m)/release/base.txz /usr/obj/$(pwd -P)/$(uname -m).$(uname -m)/release/kernel.txz ${CIRRUS_WORKING_DIR}/dist/airyx.txz /usr/local/furybsd/$(uname -m)/cache/$(head -1 version.txt)/base/
     - cd ISO; AIRYX=${CIRRUS_WORKING_DIR} ./build.sh airyx airyxOS_$(head -1 ../version.txt)
-    - sshpass -e scp -o StrictHostKeyChecking=no ${CIRRUS_WORKING_DIR}/artifacts/*.iso* airyxos@dl.int.airyx.org:nightly/
+    - #sshpass -e scp -o StrictHostKeyChecking=no ${CIRRUS_WORKING_DIR}/artifacts/*.iso* airyxos@pikachu.rvn.sh:nightly/
+    - mega-login "$MEGAUSER" "$MEGAPASS"
+    - mega-put ${CIRRUS_WORKING_DIR}/artifacts/*.iso* /nightly/
   only_if: $CIRRUS_BRANCH == 'main' || $CIRRUS_BRANCH == 'staging'
   airyx_artifacts:
     path: dist/airyx.txz

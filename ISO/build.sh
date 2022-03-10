@@ -22,8 +22,9 @@ fi
 if [ -z "${AIRYX}" ]; then
   AIRYX=$(pwd)/..
 fi
-AIRYXVER=$(head -1 ${AIRYX}/version.txt)
-version=${AIRYXVER}
+AIRYX_VERSION=$(head -1 ${AIRYX}/version.txt)
+AIRYX_CODENAME=$(tail -1 ${AIRYX}/version.txt)
+version=${AIRYX_VERSION}
 
 desktop=$1
 tag=$2
@@ -278,7 +279,7 @@ user()
   chroot ${uzip} chown -R 1000:1000 /Users/liveuser
   chroot ${uzip} pw groupmod wheel -m liveuser
   chroot ${uzip} pw groupmod video -m liveuser
-  chroot ${uzip} pw groupmod webcamd -m liveuser
+  #chroot ${uzip} pw groupmod webcamd -m liveuser
 }
 
 dm()
@@ -366,14 +367,12 @@ uzip()
 ramdisk() 
 {
   cp -R "${cwd}/overlays/ramdisk/" "${ramdisk_root}"
+  cc -static -o "${ramdisk_root}/raminit" "${cwd}/raminit.c" -lutil
   sync ### Needed?
   cd ${cwd} && zpool import furybsd && zfs set mountpoint=${workdir}/furybsd/uzip furybsd
   sync ### Needed?
   cd "${uzip}" && tar -cf - rescue | tar -xf - -C "${ramdisk_root}"
-  mkdir -p "${ramdisk_root}/bin" "${ramdisk_root}/sbin" "${ramdisk_root}/usr/libexec"
-  ln -sf "../rescue/rescue" "${ramdisk_root}/bin/launchctl"
-  ln -sf "../rescue/rescue" "${ramdisk_root}/usr/libexec/launchproxy"
-  cp -vf "${uzip}/sbin/launchd" "${ramdisk_root}/sbin"
+  mkdir -p "${ramdisk_root}/etc"
   touch "${ramdisk_root}/etc/fstab"
   cp ${uzip}/etc/login.conf ${ramdisk_root}/etc/login.conf
   makefs -b '10%' "${cdroot}/data/ramdisk.ufs" "${ramdisk_root}"
