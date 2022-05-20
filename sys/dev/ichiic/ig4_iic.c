@@ -273,7 +273,7 @@ wait_intr(ig4iic_softc_t *sc, uint32_t intr)
 	int error;
 	int txlvl = -1;
 	u_int count_us = 0;
-	u_int limit_us = 25000; /* 25ms */
+	u_int limit_us = 1000000; /* 1sec */
 
 	for (;;) {
 		/*
@@ -1210,12 +1210,9 @@ ig4iic_dump(ig4iic_softc_t *sc)
 }
 #undef REGDUMP
 
-devclass_t ig4iic_devclass;
-
-DRIVER_MODULE(iicbus, ig4iic, iicbus_driver, iicbus_devclass, NULL, NULL);
+DRIVER_MODULE(iicbus, ig4iic, iicbus_driver, NULL, NULL);
 #ifdef DEV_ACPI
-DRIVER_MODULE(acpi_iicbus, ig4iic, acpi_iicbus_driver, iicbus_devclass, NULL,
-    NULL);
+DRIVER_MODULE(acpi_iicbus, ig4iic, acpi_iicbus_driver, NULL, NULL);
 #endif
 MODULE_DEPEND(ig4iic, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
 MODULE_VERSION(ig4iic, 1);

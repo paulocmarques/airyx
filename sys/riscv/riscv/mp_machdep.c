@@ -125,14 +125,13 @@ static device_method_t riscv64_cpu_methods[] = {
 	DEVMETHOD_END
 };
 
-static devclass_t riscv64_cpu_devclass;
 static driver_t riscv64_cpu_driver = {
 	"riscv64_cpu",
 	riscv64_cpu_methods,
 	0
 };
 
-DRIVER_MODULE(riscv64_cpu, cpu, riscv64_cpu_driver, riscv64_cpu_devclass, 0, 0);
+DRIVER_MODULE(riscv64_cpu, cpu, riscv64_cpu_driver, 0, 0);
 
 static void
 riscv64_cpu_identify(driver_t *driver, device_t parent)
@@ -248,6 +247,7 @@ init_secondary(uint64_t hart)
 	/* Initialize curthread */
 	KASSERT(PCPU_GET(idlethread) != NULL, ("no idle thread"));
 	pcpup->pc_curthread = pcpup->pc_idlethread;
+	schedinit_ap();
 
 	/*
 	 * Identify current CPU. This is necessary to setup
@@ -290,7 +290,7 @@ init_secondary(uint64_t hart)
 	MPASS(PCPU_GET(curpcb) == NULL);
 
 	/* Enter the scheduler */
-	sched_throw(NULL);
+	sched_ap_entry();
 
 	panic("scheduler returned us to init_secondary");
 	/* NOTREACHED */
@@ -532,9 +532,9 @@ cpu_check_mmu(u_int id, phandle_t node, u_int addr_size, pcell_t *reg)
 void
 cpu_mp_setmaxid(void)
 {
-#ifdef FDT
 	int cores;
 
+#ifdef FDT
 	cores = ofw_cpu_early_foreach(cpu_check_mmu, true);
 	if (cores > 0) {
 		cores = MIN(cores, MAXCPU);
@@ -543,12 +543,19 @@ cpu_mp_setmaxid(void)
 		mp_ncpus = cores;
 		mp_maxid = cores - 1;
 		cpu_enum_method = CPUS_FDT;
-		return;
-	}
+	} else
 #endif
+	{
+		if (bootverbose)
+			printf("No CPU data, limiting to 1 core\n");
+		mp_ncpus = 1;
+		mp_maxid = 0;
+	}
 
-	if (bootverbose)
-		printf("No CPU data, limiting to 1 core\n");
-	mp_ncpus = 1;
-	mp_maxid = 0;
+	if (TUNABLE_INT_FETCH("hw.ncpu", &cores)) {
+		if (cores > 0 && cores < mp_ncpus) {
+			mp_ncpus = cores;
+			mp_maxid = cores - 1;
+		}
+	}
 }

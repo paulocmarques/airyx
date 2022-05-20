@@ -676,10 +676,11 @@ nfsrv_getclient(nfsquad_t clientid, int opflags, struct nfsclient **clpp,
 	 * Perform any operations specified by the opflags.
 	 */
 	if (opflags & CLOPS_CONFIRM) {
-		if (((nd->nd_flag & ND_NFSV41) != 0 &&
-		     clp->lc_confirm.lval[0] != confirm.lval[0]) ||
-		    ((nd->nd_flag & ND_NFSV41) == 0 &&
-		     clp->lc_confirm.qval != confirm.qval))
+		if ((nd->nd_flag & ND_NFSV41) != 0 &&
+		     clp->lc_confirm.lval[0] != confirm.lval[0])
+			error = NFSERR_SEQMISORDERED;
+		else if ((nd->nd_flag & ND_NFSV41) == 0 &&
+		     clp->lc_confirm.qval != confirm.qval)
 			error = NFSERR_STALECLIENTID;
 		else if (nfsrv_notsamecredname(nd, clp))
 			error = NFSERR_CLIDINUSE;
@@ -6645,6 +6646,8 @@ nfsv4_setcbsequence(struct nfsrv_descript *nd, struct nfsclient *clp,
 	bcopy(sessionid, tl, NFSX_V4SESSIONID);
 	tl += NFSX_V4SESSIONID / NFSX_UNSIGNED;
 	nd->nd_slotseq = tl;
+	nd->nd_slotid = *slotposp;
+	nd->nd_flag |= ND_HASSLOTID;
 	*tl++ = txdr_unsigned(slotseq);
 	*tl++ = txdr_unsigned(*slotposp);
 	*tl++ = txdr_unsigned(maxslot);
@@ -7655,7 +7658,7 @@ nfsrv_setdsserver(char *dspathp, char *mdspathp, NFSPROC_T *p,
 	NFSD_DEBUG(4, "setdssrv path=%s\n", dspathp);
 	*dsp = NULL;
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF, UIO_SYSSPACE,
-	    dspathp, p);
+	    dspathp);
 	error = namei(&nd);
 	NFSD_DEBUG(4, "lookup=%d\n", error);
 	if (error != 0)
@@ -7691,7 +7694,7 @@ nfsrv_setdsserver(char *dspathp, char *mdspathp, NFSPROC_T *p,
 	for (i = 0; i < nfsrv_dsdirsize; i++) {
 		snprintf(dsdirpath, dsdirsize, "%s/ds%d", dspathp, i);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
-		    UIO_SYSSPACE, dsdirpath, p);
+		    UIO_SYSSPACE, dsdirpath);
 		error = namei(&nd);
 		NFSD_DEBUG(4, "dsdirpath=%s lookup=%d\n", dsdirpath, error);
 		if (error != 0)
@@ -7719,7 +7722,7 @@ nfsrv_setdsserver(char *dspathp, char *mdspathp, NFSPROC_T *p,
 		 * system.
 		 */
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
-		    UIO_SYSSPACE, mdspathp, p);
+		    UIO_SYSSPACE, mdspathp);
 		error = namei(&nd);
 		NFSD_DEBUG(4, "mds lookup=%d\n", error);
 		if (error != 0)
@@ -8578,7 +8581,7 @@ nfsrv_mdscopymr(char *mdspathp, char *dspathp, char *curdspathp, char *buf,
 	 */
 	NFSD_DEBUG(4, "mdsopen path=%s\n", mdspathp);
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF, UIO_SYSSPACE,
-	    mdspathp, p);
+	    mdspathp);
 	error = namei(&nd);
 	NFSD_DEBUG(4, "lookup=%d\n", error);
 	if (error != 0)
@@ -8597,7 +8600,7 @@ nfsrv_mdscopymr(char *mdspathp, char *dspathp, char *curdspathp, char *buf,
 		 */
 		NFSD_DEBUG(4, "curmdsdev path=%s\n", curdspathp);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
-		    UIO_SYSSPACE, curdspathp, p);
+		    UIO_SYSSPACE, curdspathp);
 		error = namei(&nd);
 		NFSD_DEBUG(4, "ds lookup=%d\n", error);
 		if (error != 0) {
@@ -8637,7 +8640,7 @@ nfsrv_mdscopymr(char *mdspathp, char *dspathp, char *curdspathp, char *buf,
 		/* Look up the nfsdev path and find the nfsdev structure. */
 		NFSD_DEBUG(4, "mdsdev path=%s\n", dspathp);
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
-		    UIO_SYSSPACE, dspathp, p);
+		    UIO_SYSSPACE, dspathp);
 		error = namei(&nd);
 		NFSD_DEBUG(4, "ds lookup=%d\n", error);
 		if (error != 0) {

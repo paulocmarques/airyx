@@ -1117,7 +1117,7 @@ rk_pinctrl_get_flags(device_t pinctrl, device_t gpio, uint32_t pin,
 {
 	struct rk_pinctrl_softc *sc;
 	struct syscon *syscon;
-	uint32_t reg, mask, bit;
+	uint32_t reg, bit;
 	uint32_t bias;
 	int bank;
 	int rv = 0;
@@ -1141,7 +1141,6 @@ rk_pinctrl_get_flags(device_t pinctrl, device_t gpio, uint32_t pin,
 	reg = sc->conf->get_pd_offset(sc, bank);
 	reg += bank * 0x10 + ((pin / 8) * 0x4);
 	bit = (pin % 8) * 2;
-	mask = (0x3 << bit) << 16;
 	reg = SYSCON_READ_4(syscon, reg);
 	reg = (reg >> bit) & 0x3;
 	bias = sc->conf->resolv_bias_value(bank, reg);
@@ -1338,11 +1337,9 @@ static device_method_t rk_pinctrl_methods[] = {
 	DEVMETHOD_END
 };
 
-static devclass_t rk_pinctrl_devclass;
-
 DEFINE_CLASS_1(rk_pinctrl, rk_pinctrl_driver, rk_pinctrl_methods,
     sizeof(struct rk_pinctrl_softc), simplebus_driver);
 
-EARLY_DRIVER_MODULE(rk_pinctrl, simplebus, rk_pinctrl_driver,
-    rk_pinctrl_devclass, 0, 0, BUS_PASS_INTERRUPT + BUS_PASS_ORDER_MIDDLE);
+EARLY_DRIVER_MODULE(rk_pinctrl, simplebus, rk_pinctrl_driver, 0, 0,
+    BUS_PASS_INTERRUPT + BUS_PASS_ORDER_MIDDLE);
 MODULE_VERSION(rk_pinctrl, 1);

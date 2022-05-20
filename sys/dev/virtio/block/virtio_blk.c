@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bio.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/msan.h>
 #include <sys/sglist.h>
 #include <sys/sysctl.h>
 #include <sys/lock.h>
@@ -267,10 +268,8 @@ static driver_t vtblk_driver = {
 	vtblk_methods,
 	sizeof(struct vtblk_softc)
 };
-static devclass_t vtblk_devclass;
 
-VIRTIO_DRIVER_MODULE(virtio_blk, vtblk_driver, vtblk_devclass,
-    vtblk_modevent, 0);
+VIRTIO_DRIVER_MODULE(virtio_blk, vtblk_driver, vtblk_modevent, NULL);
 MODULE_VERSION(virtio_blk, 1);
 MODULE_DEPEND(virtio_blk, virtio, 1, 1, 1);
 
@@ -1151,6 +1150,8 @@ vtblk_bio_done(struct vtblk_softc *sc, struct bio *bp, int error)
 		bp->bio_resid = bp->bio_bcount;
 		bp->bio_error = error;
 		bp->bio_flags |= BIO_ERROR;
+	} else {
+		kmsan_mark_bio(bp, KMSAN_STATE_INITED);
 	}
 
 	if (bp->bio_driver1 != NULL) {

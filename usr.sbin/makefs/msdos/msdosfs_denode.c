@@ -61,11 +61,8 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <util.h>
 
-#include "ffs/buf.h"
-
 #include <fs/msdosfs/bpb.h>
-#include <fs/msdosfs/direntry.h>
-#include <fs/msdosfs/denode.h>
+#include "msdos/denode.h"
 #include <fs/msdosfs/fat.h>
 #include <fs/msdosfs/msdosfsmount.h>
 
@@ -93,7 +90,7 @@ deget(struct msdosfsmount *pmp, u_long dirclust, u_long diroffset,
 	uint64_t inode;
 	struct direntry *direntptr;
 	struct denode *ldep;
-	struct buf *bp;
+	struct m_buf *bp;
 
 	MSDOSFS_DPRINTF(("deget(pmp %p, dirclust %lu, diroffset %lx, depp %p)\n",
 	    pmp, dirclust, diroffset, depp));
@@ -155,7 +152,7 @@ deget(struct msdosfsmount *pmp, u_long dirclust, u_long diroffset,
 		ldep->de_MDate = ldep->de_CDate;
 		/* leave the other fields as garbage */
 	} else {
-		error = readep(pmp, dirclust, diroffset, &bp, &direntptr);
+		error = m_readep(pmp, dirclust, diroffset, &bp, &direntptr);
 		if (error) {
 			ldep->de_Name[0] = SLOT_DELETED;
 
@@ -213,13 +210,12 @@ int
 detrunc(struct denode *dep, u_long length, int flags, struct ucred *cred)
 {
 	int error;
-	int allerror;
 	u_long eofentry;
 	u_long chaintofree;
 	daddr_t bn;
 	int boff;
 	int isadir = dep->de_Attributes & ATTR_DIRECTORY;
-	struct buf *bp;
+	struct m_buf *bp;
 	struct msdosfsmount *pmp = dep->de_pmp;
 
 	MSDOSFS_DPRINTF(("detrunc(): file %s, length %lu, flags %x\n",
@@ -256,7 +252,7 @@ detrunc(struct denode *dep, u_long length, int flags, struct ucred *cred)
 	if (length == 0) {
 		chaintofree = dep->de_StartCluster;
 		dep->de_StartCluster = 0;
-		eofentry = ~0;
+		eofentry = ~0ul;
 	} else {
 		error = pcbmap(dep, de_clcount(pmp, length) - 1, 0,
 		    &eofentry, 0);
@@ -277,8 +273,8 @@ detrunc(struct denode *dep, u_long length, int flags, struct ucred *cred)
 	if ((boff = length & pmp->pm_crbomask) != 0) {
 		if (isadir) {
 			bn = cntobn(pmp, eofentry);
-			error = bread(pmp->pm_devvp, bn, pmp->pm_bpcluster,
-			    0, &bp);
+			error = bread((void *)pmp->pm_devvp, bn,
+			    pmp->pm_bpcluster, 0, &bp);
 			if (error) {
 				brelse(bp);
 				MSDOSFS_DPRINTF(("detrunc(): bread fails %d\n",
@@ -298,14 +294,13 @@ detrunc(struct denode *dep, u_long length, int flags, struct ucred *cred)
 	dep->de_FileSize = length;
 	if (!isadir)
 		dep->de_flag |= DE_UPDATE|DE_MODIFIED;
-	MSDOSFS_DPRINTF(("detrunc(): allerror %d, eofentry %lu\n",
-	    allerror, eofentry));
+	MSDOSFS_DPRINTF(("detrunc(): eofentry %lu\n", eofentry));
 
 	/*
 	 * If we need to break the cluster chain for the file then do it
 	 * now.
 	 */
-	if (eofentry != ~0) {
+	if (eofentry != ~0ul) {
 		error = fatentry(FAT_GET_AND_SET, pmp, eofentry,
 				 &chaintofree, CLUST_EOFE);
 		if (error) {
@@ -324,7 +319,7 @@ detrunc(struct denode *dep, u_long length, int flags, struct ucred *cred)
 	if (chaintofree != 0 && !MSDOSFSEOF(pmp, chaintofree))
 		freeclusterchain(pmp, chaintofree);
 
-	return (allerror);
+	return (0);
 }
 
 /*
@@ -359,7 +354,7 @@ deextend(struct denode *dep, u_long length, struct ucred *cred)
 	if (count > 0) {
 		if (count > pmp->pm_freeclustercount)
 			return (ENOSPC);
-		error = extendfile(dep, count, NULL, NULL, DE_CLEAR);
+		error = m_extendfile(dep, count, NULL, NULL, DE_CLEAR);
 		if (error) {
 			/* truncate the added clusters away again */
 			(void) detrunc(dep, dep->de_FileSize, 0, cred);

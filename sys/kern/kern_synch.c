@@ -87,7 +87,7 @@ struct loadavg averunnable =
  * Constants for averages over 1, 5, and 15 minutes
  * when sampling at 5 second intervals.
  */
-static fixpt_t cexp[3] = {
+static uint64_t cexp[3] = {
 	0.9200444146293232 * FSCALE,	/* exp(-1/12) */
 	0.9834714538216174 * FSCALE,	/* exp(-1/60) */
 	0.9944598480048967 * FSCALE,	/* exp(-1/180) */
@@ -149,7 +149,8 @@ _sleep(const void *ident, struct lock_object *lock, int priority,
 #endif
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, lock,
 	    "Sleeping on \"%s\"", wmesg);
-	KASSERT(sbt != 0 || mtx_owned(&Giant) || lock != NULL,
+	KASSERT(sbt != 0 || mtx_owned(&Giant) || lock != NULL ||
+	    (priority & PNOLOCK) != 0,
 	    ("sleeping without a lock"));
 	KASSERT(ident != NULL, ("_sleep: NULL ident"));
 	KASSERT(TD_IS_RUNNING(td), ("_sleep: curthread not running"));
@@ -582,7 +583,7 @@ setrunnable(struct thread *td, int srqflags)
 	    ("setrunnable: pid %d is a zombie", td->td_proc->p_pid));
 
 	swapin = 0;
-	switch (td->td_state) {
+	switch (TD_GET_STATE(td)) {
 	case TDS_RUNNING:
 	case TDS_RUNQ:
 		break;
@@ -605,7 +606,7 @@ setrunnable(struct thread *td, int srqflags)
 		}
 		break;
 	default:
-		panic("setrunnable: state 0x%x", td->td_state);
+		panic("setrunnable: state 0x%x", TD_GET_STATE(td));
 	}
 	if ((srqflags & (SRQ_HOLD | SRQ_HOLDTD)) == 0)
 		thread_unlock(td);
@@ -620,14 +621,15 @@ setrunnable(struct thread *td, int srqflags)
 static void
 loadav(void *arg)
 {
-	int i, nrun;
+	int i;
+	uint64_t nrun;
 	struct loadavg *avg;
 
-	nrun = sched_load();
+	nrun = (uint64_t)sched_load();
 	avg = &averunnable;
 
 	for (i = 0; i < 3; i++)
-		avg->ldavg[i] = (cexp[i] * avg->ldavg[i] +
+		avg->ldavg[i] = (cexp[i] * (uint64_t)avg->ldavg[i] +
 		    nrun * FSCALE * (FSCALE - cexp[i])) >> FSHIFT;
 
 	/*

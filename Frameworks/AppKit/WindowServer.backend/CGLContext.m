@@ -218,8 +218,8 @@ static GLint *attributesFromPixelFormat(CGLPixelFormatObj pixelFormat){
 CGLError CGLCreateContextForWindow(CGLPixelFormatObj pixelFormat,CGLContextObj share,CGLContextObj *resultp,unsigned long window) {
    CGLContextObj context=malloc(sizeof(struct _CGLContextObj));
 
-    WLWindow *glw = (__bridge WLWindow *)((void *)window);
-    NSRect frame = [glw frame];
+    WLWindow *w = (__bridge WLWindow *)((void *)window);
+    NSRect frame = [w frame];
 
     EGLint attrs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -284,7 +284,6 @@ CGLError CGLCreateContextForWindow(CGLPixelFormatObj pixelFormat,CGLContextObj s
     }
 
     if(window) {
-        WLWindow *w = (WLWindow *)context->window;
         NSRect frame = CGOutsetRectForNativeWindowBorder([w frame], [w styleMask]);
         context->egl_window = wl_egl_window_create([w wl_surface], frame.size.width,
             frame.size.height);
@@ -481,6 +480,8 @@ CGLError CGLGetParameter(CGLContextObj context,CGLContextParameter parameter,GLi
 }
 
 CGLError CGLFlushDrawable(CGLContextObj context) {
+    if(!context)
+        return kCGLNoError;
     eglSwapInterval(context->egl_display, 0); // don't block
     eglSwapBuffers(context->egl_display, context->egl_surface);
     return kCGLNoError;
@@ -591,10 +592,10 @@ void CGLBufferSubData(GLenum target,GLintptr offset,GLsizeiptr size,const GLvoid
 }
 
 void CGLSurfaceResize(CGLContextObj context, int width, int height) {
-    if(context->egl_window)
-        wl_egl_window_resize(context->egl_window, width, height, 0, 0);
+    wl_egl_window_resize(context->egl_window, width, height, 0, 0);
 }
 
 void CGLUseShaders(CGLContextObj context) {
     glUseProgram(context->program);
 }
+

@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -72,11 +73,10 @@ struct kvm_clock_softc {
 	u_int				 msr_wc;
 };
 
-static devclass_t	kvm_clock_devclass;
-
 static struct pvclock_wall_clock *kvm_clock_get_wallclock(void *arg);
 static void	kvm_clock_system_time_enable(struct kvm_clock_softc *sc);
 static void	kvm_clock_system_time_enable_pcpu(void *arg);
+static void	kvm_clock_setup_sysctl(device_t);
 
 static struct pvclock_wall_clock *
 kvm_clock_get_wallclock(void *arg)
@@ -166,6 +166,7 @@ kvm_clock_attach(device_t dev)
 	sc->pvc.timeinfos = sc->timeinfos;
 	sc->pvc.stable_flag_supported = stable_flag_supported;
 	pvclock_init(&sc->pvc, dev, KVM_CLOCK_DEVNAME, KVM_CLOCK_TC_QUALITY, 0);
+	kvm_clock_setup_sysctl(dev);
 	return (0);
 }
 
@@ -217,6 +218,29 @@ kvm_clock_settime(device_t dev, struct timespec *ts)
 	return (0);
 }
 
+static int
+kvm_clock_tsc_freq_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct kvm_clock_softc *sc = oidp->oid_arg1;
+        uint64_t freq = pvclock_tsc_freq(sc->timeinfos);
+
+        return (sysctl_handle_64(oidp, &freq, 0, req));
+}
+
+static void
+kvm_clock_setup_sysctl(device_t dev)
+{
+	struct kvm_clock_softc *sc = device_get_softc(dev);
+        struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(dev);
+        struct sysctl_oid *tree = device_get_sysctl_tree(dev);
+        struct sysctl_oid_list *child = SYSCTL_CHILDREN(tree);
+
+        SYSCTL_ADD_PROC(ctx, child, OID_AUTO, "tsc_freq",
+            CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE, sc, 0,
+            kvm_clock_tsc_freq_sysctl, "QU",
+            "Time Stamp Counter frequency");
+}
+
 static device_method_t kvm_clock_methods[] = {
 	DEVMETHOD(device_identify,	kvm_clock_identify),
 	DEVMETHOD(device_probe,		kvm_clock_probe),
@@ -237,4 +261,4 @@ static driver_t kvm_clock_driver = {
 	sizeof(struct kvm_clock_softc),
 };
 
-DRIVER_MODULE(kvm_clock, nexus, kvm_clock_driver, kvm_clock_devclass, 0, 0);
+DRIVER_MODULE(kvm_clock, nexus, kvm_clock_driver, 0, 0);

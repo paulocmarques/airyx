@@ -219,15 +219,13 @@ static device_method_t umct_methods[] = {
 	DEVMETHOD_END
 };
 
-static devclass_t umct_devclass;
-
 static driver_t umct_driver = {
 	.name = "umct",
 	.methods = umct_methods,
 	.size = sizeof(struct umct_softc),
 };
 
-DRIVER_MODULE(umct, uhub, umct_driver, umct_devclass, NULL, 0);
+DRIVER_MODULE(umct, uhub, umct_driver, NULL, NULL);
 MODULE_DEPEND(umct, ucom, 1, 1, 1);
 MODULE_DEPEND(umct, usb, 1, 1, 1);
 MODULE_VERSION(umct, 1);
@@ -478,7 +476,8 @@ static uint8_t
 umct_calc_baud(uint32_t baud)
 {
 	switch (baud) {
-		case B300:return (0x1);
+	case B300:
+		return (0x1);
 	case B600:
 		return (0x2);
 	case B1200:

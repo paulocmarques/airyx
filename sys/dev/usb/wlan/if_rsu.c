@@ -274,9 +274,7 @@ static driver_t rsu_driver = {
 	.size = sizeof(struct rsu_softc)
 };
 
-static devclass_t rsu_devclass;
-
-DRIVER_MODULE(rsu, uhub, rsu_driver, rsu_devclass, NULL, 0);
+DRIVER_MODULE(rsu, uhub, rsu_driver, NULL, NULL);
 MODULE_DEPEND(rsu, wlan, 1, 1, 1);
 MODULE_DEPEND(rsu, usb, 1, 1, 1);
 MODULE_DEPEND(rsu, firmware, 1, 1, 1);
@@ -2899,6 +2897,7 @@ rsu_tx_start(struct rsu_softc *sc, struct ieee80211_node *ni,
 	}
 
 	xferlen = sizeof(*txd) + m0->m_pkthdr.len;
+	KASSERT(xferlen <= RSU_TXBUFSZ, ("%s: invalid length", __func__));
 	m_copydata(m0, 0, m0->m_pkthdr.len, (caddr_t)&txd[1]);
 
 	data->buflen = xferlen;

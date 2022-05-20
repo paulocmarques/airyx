@@ -1135,31 +1135,22 @@ dummy_disconnect(struct socket *so)
  */
 
 static struct pr_usrreqs ngc_usrreqs = {
-	.pru_abort =		NULL,
 	.pru_attach =		ngc_attach,
 	.pru_bind =		ngc_bind,
 	.pru_connect =		ngc_connect,
 	.pru_detach =		ngc_detach,
 	.pru_disconnect =	dummy_disconnect,
-	.pru_peeraddr =		NULL,
 	.pru_send =		ngc_send,
-	.pru_shutdown =		NULL,
 	.pru_sockaddr =		ng_getsockaddr,
-	.pru_close =		NULL,
 };
 
 static struct pr_usrreqs ngd_usrreqs = {
-	.pru_abort =		NULL,
 	.pru_attach =		ngd_attach,
-	.pru_bind =		NULL,
 	.pru_connect =		ngd_connect,
 	.pru_detach =		ngd_detach,
 	.pru_disconnect =	dummy_disconnect,
-	.pru_peeraddr =		NULL,
 	.pru_send =		ngd_send,
-	.pru_shutdown =		NULL,
 	.pru_sockaddr =		ng_getsockaddr,
-	.pru_close =		NULL,
 };
 
 /*
@@ -1223,7 +1214,7 @@ ngs_mod_event(module_t mod, int event, void *data)
 	return (error);
 }
 
-VNET_DOMAIN_SET(ng);
+DOMAIN_SET(ng);
 
 SYSCTL_INT(_net_graph, OID_AUTO, family, CTLFLAG_RD, SYSCTL_NULL_INT_PTR, AF_NETGRAPH, "");
 static SYSCTL_NODE(_net_graph, OID_AUTO, data, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,

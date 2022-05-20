@@ -120,8 +120,6 @@ static u_int32_t aac_cam_reset_bus(struct cam_sim *, union ccb *);
 static u_int32_t aac_cam_abort_ccb(struct cam_sim *, union ccb *);
 static u_int32_t aac_cam_term_io(struct cam_sim *, union ccb *);
 
-static devclass_t	aacraid_pass_devclass;
-
 static device_method_t	aacraid_pass_methods[] = {
 	DEVMETHOD(device_probe,		aac_cam_probe),
 	DEVMETHOD(device_attach,	aac_cam_attach),
@@ -135,7 +133,7 @@ static driver_t	aacraid_pass_driver = {
 	sizeof(struct aac_cam)
 };
 
-DRIVER_MODULE(aacraidp, aacraid, aacraid_pass_driver, aacraid_pass_devclass, 0, 0);
+DRIVER_MODULE(aacraidp, aacraid, aacraid_pass_driver, 0, 0);
 MODULE_DEPEND(aacraidp, cam, 1, 1, 1);
 
 MALLOC_DEFINE(M_AACRAIDCAM, "aacraidcam", "AACRAID CAM info");
@@ -1205,6 +1203,12 @@ aac_cam_complete(struct aac_command *cm)
 				command = ccb->csio.cdb_io.cdb_bytes[0];
 
 			if (command == INQUIRY) {
+				/* Ignore Data Overrun errors on INQUIRY */
+				if ((ccb->ccb_h.status & CAM_STATUS_MASK) ==
+				    CAM_DATA_RUN_ERR)
+					ccb->ccb_h.status = (ccb->ccb_h.status &
+					    ~CAM_STATUS_MASK) | CAM_REQ_CMP;
+
 				if (ccb->ccb_h.status == CAM_REQ_CMP) {
 				  device = ccb->csio.data_ptr[0] & 0x1f;
 				  /*

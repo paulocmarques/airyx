@@ -79,12 +79,11 @@ struct selinfo;
  * Locking key to struct sockbuf:
  * (a) locked by SOCKBUF_LOCK().
  */
-struct	sockbuf {
-	struct	mtx sb_mtx;		/* sockbuf lock */
-	struct	sx sb_sx;		/* prevent I/O interlacing */
+struct sockbuf {
+	struct	mtx *sb_mtx;		/* sockbuf lock */
 	struct	selinfo *sb_sel;	/* process selecting read/write */
 	short	sb_state;	/* (a) socket state on sockbuf */
-#define	sb_startzero	sb_mb
+	short	sb_flags;	/* (a) flags, see above */
 	struct	mbuf *sb_mb;	/* (a) the mbuf chain */
 	struct	mbuf *sb_mbtail; /* (a) the last mbuf in the chain */
 	struct	mbuf *sb_lastrecord;	/* (a) first mbuf of last
@@ -104,13 +103,12 @@ struct	sockbuf {
 	u_int	sb_tlsdcc;	/* (a) TLS characters being decrypted */
 	int	sb_lowat;	/* (a) low water mark */
 	sbintime_t	sb_timeo;	/* (a) timeout for read/write */
-	uint64_t sb_tls_seqno;	/* (a) TLS seqno */
-	struct	ktls_session *sb_tls_info; /* (a + b) TLS state */
 	struct	mbuf *sb_mtls;	/* (a) TLS mbuf chain */
 	struct	mbuf *sb_mtlstail; /* (a) last mbuf in TLS chain */
-	short	sb_flags;	/* (a) flags, see above */
 	int	(*sb_upcall)(struct socket *, void *, int); /* (a) */
 	void	*sb_upcallarg;	/* (a) */
+	uint64_t sb_tls_seqno;	/* (a) TLS seqno */
+	struct	ktls_session *sb_tls_info; /* (a + b) TLS state */
 	TAILQ_HEAD(, kaiocb) sb_aiojobq; /* (a) pending AIO ops */
 	struct	task sb_aiotask; /* AIO task */
 };
@@ -119,10 +117,13 @@ struct	sockbuf {
 #ifdef _KERNEL
 
 /*
- * Per-socket buffer mutex used to protect most fields in the socket
- * buffer.
+ * Per-socket buffer mutex used to protect most fields in the socket buffer.
+ * These make use of the mutex pointer embedded in struct sockbuf, which
+ * currently just references mutexes in the containing socket.  The
+ * SOCK_SENDBUF_LOCK() etc. macros can be used instead of or in combination with
+ * these locking macros.
  */
-#define	SOCKBUF_MTX(_sb)		(&(_sb)->sb_mtx)
+#define	SOCKBUF_MTX(_sb)		((_sb)->sb_mtx)
 #define	SOCKBUF_LOCK_INIT(_sb, _name) \
 	mtx_init(SOCKBUF_MTX(_sb), _name, NULL, MTX_DEF)
 #define	SOCKBUF_LOCK_DESTROY(_sb)	mtx_destroy(SOCKBUF_MTX(_sb))
@@ -171,7 +172,6 @@ void	sbdroprecord_locked(struct sockbuf *sb);
 void	sbflush(struct sockbuf *sb);
 void	sbflush_locked(struct sockbuf *sb);
 void	sbrelease(struct sockbuf *sb, struct socket *so);
-void	sbrelease_internal(struct sockbuf *sb, struct socket *so);
 void	sbrelease_locked(struct sockbuf *sb, struct socket *so);
 int	sbsetopt(struct socket *so, int cmd, u_long cc);
 int	sbreserve_locked(struct sockbuf *sb, u_long cc, struct socket *so,

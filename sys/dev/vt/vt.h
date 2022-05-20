@@ -2,7 +2,6 @@
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
  * Copyright (c) 2009, 2013 The FreeBSD Foundation
- * All rights reserved.
  *
  * This software was developed by Ed Schouten under sponsorship from the
  * FreeBSD Foundation.
@@ -387,8 +386,6 @@ struct vt_driver {
  */
 
 extern struct vt_device vt_consdev;
-extern struct terminal vt_consterm;
-extern const struct terminal_class vt_termclass;
 void vt_upgrade(struct vt_device *vd);
 
 #define	PIXEL_WIDTH(w)	((w) / 8)

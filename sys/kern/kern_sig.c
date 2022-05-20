@@ -292,9 +292,7 @@ ksiginfo_alloc(int wait)
 {
 	int flags;
 
-	flags = M_ZERO;
-	if (! wait)
-		flags |= M_NOWAIT;
+	flags = M_ZERO | (wait ? M_WAITOK : M_NOWAIT);
 	if (ksiginfo_zone != NULL)
 		return ((ksiginfo_t *)uma_zalloc(ksiginfo_zone, flags));
 	return (NULL);
@@ -998,9 +996,7 @@ sigdflt(struct sigacts *ps, int sig)
 void
 execsigs(struct proc *p)
 {
-	sigset_t osigignore;
 	struct sigacts *ps;
-	int sig;
 	struct thread *td;
 
 	/*
@@ -1012,21 +1008,6 @@ execsigs(struct proc *p)
 	ps = p->p_sigacts;
 	mtx_lock(&ps->ps_mtx);
 	sig_drop_caught(p);
-
-	/*
-	 * As CloudABI processes cannot modify signal handlers, fully
-	 * reset all signals to their default behavior. Do ignore
-	 * SIGPIPE, as it would otherwise be impossible to recover from
-	 * writes to broken pipes and sockets.
-	 */
-	if (SV_PROC_ABI(p) == SV_ABI_CLOUDABI) {
-		osigignore = ps->ps_sigignore;
-		SIG_FOREACH(sig, &osigignore) {
-			if (sig != SIGPIPE)
-				sigdflt(ps, sig);
-		}
-		SIGADDSET(ps->ps_sigignore, SIGPIPE);
-	}
 
 	/*
 	 * Reset stack state to the user stack.
@@ -1277,15 +1258,13 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 	struct sigacts *ps;
 	sigset_t saved_mask, new_block;
 	struct proc *p;
-	int error, sig, timo, timevalid = 0;
-	struct timespec rts, ets, ts;
-	struct timeval tv;
+	int error, sig, timevalid = 0;
+	sbintime_t sbt, precision, tsbt;
+	struct timespec ts;
 	bool traced;
 
 	p = td->td_proc;
 	error = 0;
-	ets.tv_sec = 0;
-	ets.tv_nsec = 0;
 	traced = false;
 
 	/* Ensure the sigfastblock value is up to date. */
@@ -1294,10 +1273,19 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 	if (timeout != NULL) {
 		if (timeout->tv_nsec >= 0 && timeout->tv_nsec < 1000000000) {
 			timevalid = 1;
-			getnanouptime(&rts);
-			timespecadd(&rts, timeout, &ets);
+			ts = *timeout;
+			if (ts.tv_sec < INT32_MAX / 2) {
+				tsbt = tstosbt(ts);
+				precision = tsbt;
+				precision >>= tc_precexp;
+				if (TIMESEL(&sbt, tsbt))
+					sbt += tc_tick_sbt;
+				sbt += tsbt;
+			} else
+				precision = sbt = 0;
 		}
-	}
+	} else
+		precision = sbt = 0;
 	ksiginfo_init(ksi);
 	/* Some signals can not be waited for. */
 	SIG_CANTMASK(waitset);
@@ -1331,21 +1319,9 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 		 * POSIX says this must be checked after looking for pending
 		 * signals.
 		 */
-		if (timeout != NULL) {
-			if (!timevalid) {
-				error = EINVAL;
-				break;
-			}
-			getnanouptime(&rts);
-			if (timespeccmp(&rts, &ets, >=)) {
-				error = EAGAIN;
-				break;
-			}
-			timespecsub(&ets, &rts, &ts);
-			TIMESPEC_TO_TIMEVAL(&tv, &ts);
-			timo = tvtohz(&tv);
-		} else {
-			timo = 0;
+		if (timeout != NULL && !timevalid) {
+			error = EINVAL;
+			break;
 		}
 
 		if (traced) {
@@ -1353,16 +1329,12 @@ kern_sigtimedwait(struct thread *td, sigset_t waitset, ksiginfo_t *ksi,
 			break;
 		}
 
-		error = msleep(&p->p_sigacts, &p->p_mtx, PPAUSE | PCATCH,
-		    "sigwait", timo);
+		error = msleep_sbt(&p->p_sigacts, &p->p_mtx, PPAUSE | PCATCH,
+		    "sigwait", sbt, precision, C_ABSOLUTE);
 
 		/* The syscalls can not be restarted. */
 		if (error == ERESTART)
 			error = EINTR;
-
-		/* We will calculate timeout by ourself. */
-		if (timeout != NULL && error == EAGAIN)
-			error = 0;
 
 		/*
 		 * If PTRACE_SCE or PTRACE_SCX were set after
@@ -2038,11 +2010,10 @@ trapsignal(struct thread *td, ksiginfo_t *ksi)
 	struct sigacts *ps;
 	struct proc *p;
 	sigset_t sigmask;
-	int code, sig;
+	int sig;
 
 	p = td->td_proc;
 	sig = ksi->ksi_signo;
-	code = ksi->ksi_code;
 	KASSERT(_SIG_VALID(sig), ("invalid signal"));
 
 	sigfastblock_fetch(td);
@@ -2057,7 +2028,7 @@ trapsignal(struct thread *td, ksiginfo_t *ksi)
 #ifdef KTRACE
 		if (KTRPOINT(curthread, KTR_PSIG))
 			ktrpsig(sig, ps->ps_sigact[_SIG_IDX(sig)],
-			    &td->td_sigmask, code);
+			    &td->td_sigmask, ksi->ksi_code);
 #endif
 		(*p->p_sysent->sv_sendsig)(ps->ps_sigact[_SIG_IDX(sig)],
 		    ksi, &td->td_sigmask);
@@ -2150,7 +2121,7 @@ pksignal(struct proc *p, int sig, ksiginfo_t *ksi)
 
 /* Utility function for finding a thread to send signal event to. */
 int
-sigev_findtd(struct proc *p ,struct sigevent *sigev, struct thread **ttd)
+sigev_findtd(struct proc *p, struct sigevent *sigev, struct thread **ttd)
 {
 	struct thread *td;
 
@@ -3677,14 +3648,14 @@ corefile_open_last(struct thread *td, char *name, int indexpos,
 		    i);
 		name[indexpos + indexlen] = ch;
 
-		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name, td);
+		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name);
 		error = vn_open_cred(&nd, &flags, cmode, oflags, td->td_ucred,
 		    NULL);
 		if (error != 0)
 			break;
 
 		vp = nd.ni_vp;
-		NDFREE(&nd, NDF_ONLY_PNBUF);
+		NDFREE_PNBUF(&nd);
 		if ((flags & O_CREAT) == O_CREAT) {
 			nextvp = vp;
 			break;
@@ -3852,12 +3823,12 @@ corefile_open(const char *comm, uid_t uid, pid_t pid, struct thread *td,
 		if ((td->td_proc->p_flag & P_SUGID) != 0)
 			flags |= O_EXCL;
 
-		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name, td);
+		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name);
 		error = vn_open_cred(&nd, &flags, cmode, oflags, td->td_ucred,
 		    NULL);
 		if (error == 0) {
 			*vpp = nd.ni_vp;
-			NDFREE(&nd, NDF_ONLY_PNBUF);
+			NDFREE_PNBUF(&nd);
 		}
 	}
 

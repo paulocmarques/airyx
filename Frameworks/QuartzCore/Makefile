@@ -60,13 +60,14 @@ INCS= \
 	QuartzCore.h 
 
 RESOURCES=Info.plist English.lproj
-CFLAGS+= ${FMWK_CFLAGS} -I${TOPDIR}/Frameworks -I${.CURDIR}/../Foundation/Headers -I${.CURDIR}/../AppKit/Headers
+CFLAGS+= ${FMWK_CFLAGS} -I${TOPDIR}/Frameworks -I${.CURDIR}/../Foundation/Headers \
+        -I${.CURDIR}/../AppKit/Headers -F${.CURDIR}/../OpenGL -framework OpenGL
 LDFLAGS+= ${FMWK_LDFLAGS} -lEGL -lGLESv2 
 
 _install-hook:
 	rm -rf ${BUILDROOT}/System/Library/Frameworks/${FRAMEWORK}.framework
 	cp -av ${.CURDIR}/${FRAMEWORK}.framework ${BUILDROOT}/System/Library/Frameworks/
 
-.include <airyx.framework.mk>
+.include <rvn.framework.mk>
 
 installresources: _install-hook

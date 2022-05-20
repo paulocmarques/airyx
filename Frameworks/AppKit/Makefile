@@ -2,7 +2,8 @@
 
 MK_WERROR= no
 FRAMEWORK=AppKit
-WLPROTOS=${.CURDIR}/../../CoreServices/WindowServer/wlroots/wayland-protocols
+WLPROTOS=${.CURDIR}/../../CoreServices/WindowServer/wayland-protocols
+WLRPROTOS=${.CURDIR}/../../CoreServices/WindowServer/wlroots/protocol
 SRCS= \
 CoreData_/NSPersistentDocument.m \
 CoreData_/_NSManagedProxy.m \
@@ -268,6 +269,8 @@ WindowServer.backend/O2Font_FT.m \
 WindowServer.backend/WLWindow.m \
 WindowServer.backend/WLDisplay.m \
 xdg-shell.c \
+layer-shell-v1.c \
+output-management-v1.c
 #X11.subproj/NSOpenGLDrawable_X11.m \
 X11.subproj/O2Context_cairo.m \
 X11.subproj/O2FontState_cairo.m \
@@ -602,11 +605,11 @@ RESOURCES=Info.plist en.lproj de.lproj fr.lproj \
 	WindowServer.backend/vertShader.glsl \
 	WindowServer.backend/fragShader.glsl
 
-CFLAGS+= ${FMWK_CFLAGS} -I${.CURDIR}/.. -I${BUILDROOT}/usr/include -I/usr/local/include \
-	 -I../OpenGL/include -I${.CURDIR}/Headers -I../Foundation/Headers \
+CFLAGS+= -I${.CURDIR}/.. -I${BUILDROOT}/usr/include -I/usr/local/include \
+	 -F${.CURDIR}/../OpenGL -framework OpenGL -I${.CURDIR}/Headers -I../Foundation/Headers \
 	 -I/usr/include/dbus-1.0 -I/usr/lib/dbus-1.0/include \
          -I${.CURDIR} -I${MAKEOBJDIR} \
-	 -D_BuildingFramework -DFREETYPE_PRESENT 
+	 -D_BuildingFramework -DFREETYPE_PRESENT
 LDFLAGS+= ${FMWK_LDFLAGS} -L/usr/local/lib \
 	  -Wl,-R/System/Library/Frameworks/Foundation.framework/Versions/A \
 	  -Wl,-R/System/Library/Frameworks/CoreFoundation.framework/Versions/A \
@@ -625,7 +628,8 @@ LDFLAGS+= ${FMWK_LDFLAGS} -L/usr/local/lib \
 	  -L${BUILDROOT}/System/Library/Frameworks/OpenGL.framework/Versions/Current \
 	  -L${BUILDROOT}/System/Library/Frameworks/Onyx2D.framework/Versions/Current \
 	  -lFoundation -lCoreFoundation -lCoreGraphics -lCoreText -lCoreData -lQuartzCore -lOpenGL -lOnyx2D \
-	  -lwayland-client -lobjc -lfreetype -lfontconfig -lxkbcommon -lEGL -lGLESv2 -lEGL_mesa -lwayland-egl -lm
+	  -lwayland-client -lobjc -lfreetype -lfontconfig -lxkbcommon -lEGL -lGLESv2 -lEGL_mesa -lwayland-egl \
+          -lmach -lm
 
 
 fmwkclean:
@@ -646,16 +650,37 @@ xdg-shell.c:
 	wayland-scanner private-code \
                 ${WLPROTOS}/stable/xdg-shell/xdg-shell.xml ${.TARGET}
 
+wlr-layer-shell-unstable-v1-client-protocol.h:
+	wayland-scanner client-header \
+                ${WLRPROTOS}/wlr-layer-shell-unstable-v1.xml ${.TARGET}
+
+layer-shell-v1.c:
+	wayland-scanner private-code \
+                ${WLRPROTOS}/wlr-layer-shell-unstable-v1.xml ${.TARGET}
+
+xdg-output-management-unstable-v1-client-protocol.h:
+	wayland-scanner client-header \
+                ${WLPROTOS}/unstable/xdg-output/xdg-output-unstable-v1.xml ${.TARGET}
+
+output-management-v1.c:
+	wayland-scanner private-code \
+                ${WLPROTOS}/unstable/xdg-output/xdg-output-unstable-v1.xml ${.TARGET}
+
 clean-deps:
 	rm -f .depend.*
 
 clean-gen-files:
-	rm -f xdg-shell-client-protocol.h xdg-shell.c
+	rm -f xdg-shell-client-protocol.h xdg-shell.c \
+                wlr-layer-shell-unstable-v1-client-protocol.h layer-shell-v1.c \
+                xdg-output-management-unstable-v1-client-protocol.h \
+                output-management-v1.c
 
-.include <airyx.framework.mk>
+.include <rvn.framework.mk>
 
 clean: fmwkclean
 post-resources: _install-hook
-${SOBJS}: xdg-shell-client-protocol.h xdg-shell.c
+${SOBJS}: xdg-shell-client-protocol.h xdg-shell.c \
+        wlr-layer-shell-unstable-v1-client-protocol.h layer-shell-v1.c \
+        xdg-output-management-unstable-v1-client-protocol.h output-management-v1.c
 clean: clean-deps clean-gen-files
-
+CFLAGS+= ${FMWK_CFLAGS}

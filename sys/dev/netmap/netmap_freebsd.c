@@ -264,7 +264,7 @@ nm_os_csum_tcpudp_ipv4(struct nm_iphdr *iph, void *data,
 #ifdef INET
 	uint16_t pseudolen = datalen + iph->protocol;
 
-	/* Compute and insert the pseudo-header cheksum. */
+	/* Compute and insert the pseudo-header checksum. */
 	*check = in_pseudo(iph->saddr, iph->daddr,
 				 htobe16(pseudolen));
 	/* Compute the checksum on TCP/UDP header + payload
@@ -821,9 +821,8 @@ static driver_t ptn_memdev_driver = {
 
 /* We use (SI_ORDER_MIDDLE+1) here, see DEV_MODULE_ORDERED() invocation
  * below. */
-static devclass_t ptnetmap_devclass;
-DRIVER_MODULE_ORDERED(ptn_memdev, pci, ptn_memdev_driver, ptnetmap_devclass,
-		      NULL, NULL, SI_ORDER_MIDDLE + 1);
+DRIVER_MODULE_ORDERED(ptn_memdev, pci, ptn_memdev_driver, NULL, NULL,
+		      SI_ORDER_MIDDLE + 1);
 
 /*
  * Map host netmap memory through PCI-BAR in the guest OS,
@@ -1057,7 +1056,7 @@ netmap_dev_pager_fault(vm_object_t object, vm_ooffset_t offset,
 		vm_page_replace(page, object, (*mres)->pindex, *mres);
 		*mres = page;
 	}
-	vm_page_valid(page);
+	page->valid = VM_PAGE_BITS_ALL;
 	return (VM_PAGER_OK);
 }
 

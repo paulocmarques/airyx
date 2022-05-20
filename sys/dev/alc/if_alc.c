@@ -240,12 +240,10 @@ static driver_t alc_driver = {
 	sizeof(struct alc_softc)
 };
 
-static devclass_t alc_devclass;
-
-DRIVER_MODULE(alc, pci, alc_driver, alc_devclass, 0, 0);
+DRIVER_MODULE(alc, pci, alc_driver, 0, 0);
 MODULE_PNP_INFO("U16:vendor;U16:device", pci, alc, alc_ident_table,
     nitems(alc_ident_table) - 1);
-DRIVER_MODULE(miibus, alc, miibus_driver, miibus_devclass, 0, 0);
+DRIVER_MODULE(miibus, alc, miibus_driver, 0, 0);
 
 static struct resource_spec alc_res_spec_mem[] = {
 	{ SYS_RES_MEMORY,	PCIR_BAR(0),	RF_ACTIVE },
@@ -3932,7 +3930,6 @@ static void
 alc_init_locked(struct alc_softc *sc)
 {
 	struct ifnet *ifp;
-	struct mii_data *mii;
 	uint8_t eaddr[ETHER_ADDR_LEN];
 	bus_addr_t paddr;
 	uint32_t reg, rxf_hi, rxf_lo;
@@ -3940,7 +3937,6 @@ alc_init_locked(struct alc_softc *sc)
 	ALC_LOCK_ASSERT(sc);
 
 	ifp = sc->alc_ifp;
-	mii = device_get_softc(sc->alc_miibus);
 
 	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) != 0)
 		return;
@@ -4676,7 +4672,7 @@ sysctl_hw_alc_int_mod(SYSCTL_HANDLER_ARGS)
 static void
 alc_debugnet_init(struct ifnet *ifp, int *nrxr, int *ncl, int *clsize)
 {
-	struct alc_softc *sc;
+	struct alc_softc *sc __diagused;
 
 	sc = if_getsoftc(ifp);
 	KASSERT(sc->alc_buf_size <= MCLBYTES, ("incorrect cluster size"));

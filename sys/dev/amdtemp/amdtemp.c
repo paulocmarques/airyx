@@ -229,8 +229,7 @@ static driver_t amdtemp_driver = {
 	sizeof(struct amdtemp_softc),
 };
 
-static devclass_t amdtemp_devclass;
-DRIVER_MODULE(amdtemp, hostb, amdtemp_driver, amdtemp_devclass, NULL, NULL);
+DRIVER_MODULE(amdtemp, hostb, amdtemp_driver, NULL, NULL);
 MODULE_VERSION(amdtemp, 1);
 MODULE_DEPEND(amdtemp, amdsmn, 1, 1, 1);
 MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdtemp, amdtemp_products,
@@ -752,7 +751,7 @@ amdtemp_gettemp15hm60h(device_t dev, amdsensor_t sensor)
 {
 	struct amdtemp_softc *sc = device_get_softc(dev);
 	uint32_t val;
-	int error;
+	int error __diagused;
 
 	error = amdsmn_read(sc->sc_smn, AMDTEMP_15H_M60H_REPTMP_CTRL, &val);
 	KASSERT(error == 0, ("amdsmn_read"));
@@ -764,7 +763,7 @@ amdtemp_gettemp17h(device_t dev, amdsensor_t sensor)
 {
 	struct amdtemp_softc *sc = device_get_softc(dev);
 	uint32_t val;
-	int error;
+	int error __diagused;
 
 	switch (sensor) {
 	case CORE0_SENSOR0:

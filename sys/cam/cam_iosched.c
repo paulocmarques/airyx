@@ -58,6 +58,9 @@ __FBSDID("$FreeBSD$");
 static MALLOC_DEFINE(M_CAMSCHED, "CAM I/O Scheduler",
     "CAM I/O Scheduler buffers");
 
+static SYSCTL_NODE(_kern_cam, OID_AUTO, iosched, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "CAM I/O Scheduler parameters");
+
 /*
  * Default I/O scheduler for FreeBSD. This implementation is just a thin-vineer
  * over the bioq_* interface, with notions of separate calls for normal I/O and
@@ -70,8 +73,8 @@ static MALLOC_DEFINE(M_CAMSCHED, "CAM I/O Scheduler",
 
 #ifdef CAM_IOSCHED_DYNAMIC
 
-static bool do_dynamic_iosched = 1;
-SYSCTL_BOOL(_kern_cam, OID_AUTO, do_dynamic_iosched, CTLFLAG_RD | CTLFLAG_TUN,
+static bool do_dynamic_iosched = true;
+SYSCTL_BOOL(_kern_cam_iosched, OID_AUTO, dynamic, CTLFLAG_RD | CTLFLAG_TUN,
     &do_dynamic_iosched, 1,
     "Enable Dynamic I/O scheduler optimizations.");
 
@@ -96,9 +99,54 @@ SYSCTL_BOOL(_kern_cam, OID_AUTO, do_dynamic_iosched, CTLFLAG_RD | CTLFLAG_TUN,
  * Note: See computation of EMA and EMVAR for acceptable ranges of alpha.
  */
 static int alpha_bits = 9;
-SYSCTL_INT(_kern_cam, OID_AUTO, iosched_alpha_bits, CTLFLAG_RW | CTLFLAG_TUN,
+SYSCTL_INT(_kern_cam_iosched, OID_AUTO, alpha_bits, CTLFLAG_RW | CTLFLAG_TUN,
     &alpha_bits, 1,
     "Bits in EMA's alpha.");
+
+/*
+ * Different parameters for the buckets of latency we keep track of. These are all
+ * published read-only since at present they are compile time constants.
+ *
+ * Bucket base is the upper bounds of the first latency bucket. It's currently 20us.
+ * With 20 buckets (see below), that leads to a geometric progression with a max size
+ * of 5.2s which is safeily larger than 1s to help diagnose extreme outliers better.
+ */
+#ifndef BUCKET_BASE
+#define BUCKET_BASE ((SBT_1S / 50000) + 1)	/* 20us */
+#endif
+static sbintime_t bucket_base = BUCKET_BASE;
+SYSCTL_SBINTIME_USEC(_kern_cam_iosched, OID_AUTO, bucket_base_us, CTLFLAG_RD,
+    &bucket_base,
+    "Size of the smallest latency bucket");
+
+/*
+ * Bucket ratio is the geometric progression for the bucket. For a bucket b_n
+ * the size of bucket b_n+1 is b_n * bucket_ratio / 100.
+ */
+static int bucket_ratio = 200;	/* Rather hard coded at the moment */
+SYSCTL_INT(_kern_cam_iosched, OID_AUTO, bucket_ratio, CTLFLAG_RD,
+    &bucket_ratio, 200,
+    "Latency Bucket Ratio for geometric progression.");
+
+/*
+ * Number of total buckets. Starting at BUCKET_BASE, each one is a power of 2.
+ */
+#ifndef LAT_BUCKETS
+#define LAT_BUCKETS 20	/* < 20us < 40us ... < 2^(n-1)*20us >= 2^(n-1)*20us */
+#endif
+static int lat_buckets = LAT_BUCKETS;
+SYSCTL_INT(_kern_cam_iosched, OID_AUTO, buckets, CTLFLAG_RD,
+    &lat_buckets, LAT_BUCKETS,
+    "Total number of latency buckets published");
+
+/*
+ * Read bias: how many reads do we favor before scheduling a write
+ * when we have a choice.
+ */
+static int default_read_bias = 0;
+SYSCTL_INT(_kern_cam_iosched, OID_AUTO, read_bias, CTLFLAG_RWTUN,
+    &default_read_bias, 0,
+    "Default read bias for new devices.");
 
 struct iop_stats;
 struct cam_iosched_softc;
@@ -233,7 +281,6 @@ struct iop_stats {
 	uint32_t	state_flags;
 #define IOP_RATE_LIMITED		1u
 
-#define LAT_BUCKETS 15			/* < 1ms < 2ms ... < 2^(n-1)ms >= 2^(n-1)ms*/
 	uint64_t	latencies[LAT_BUCKETS];
 
 	struct cam_iosched_softc *softc;
@@ -1111,8 +1158,8 @@ cam_iosched_init(struct cam_iosched_softc **iscp, struct cam_periph *periph)
 #ifdef CAM_IOSCHED_DYNAMIC
 	if (do_dynamic_iosched) {
 		bioq_init(&(*iscp)->write_queue);
-		(*iscp)->read_bias = 100;
-		(*iscp)->current_read_bias = 100;
+		(*iscp)->read_bias = default_read_bias;
+		(*iscp)->current_read_bias = 0;
 		(*iscp)->quanta = min(hz, 200);
 		cam_iosched_iop_stats_init(*iscp, &(*iscp)->read_stats);
 		cam_iosched_iop_stats_init(*iscp, &(*iscp)->write_stats);
@@ -1196,7 +1243,7 @@ void cam_iosched_sysctl_init(struct cam_iosched_softc *isc,
 
 	SYSCTL_ADD_INT(ctx, n,
 	    OID_AUTO, "read_bias", CTLFLAG_RW,
-	    &isc->read_bias, 100,
+	    &isc->read_bias, default_read_bias,
 	    "How biased towards read should we be independent of limits");
 
 	SYSCTL_ADD_PROC(ctx, n,
@@ -1457,6 +1504,28 @@ cam_iosched_get_trim(struct cam_iosched_softc *isc)
 	return cam_iosched_next_trim(isc);
 }
 
+
+#ifdef CAM_IOSCHED_DYNAMIC
+static struct bio *
+bio_next(struct bio *bp)
+{
+	bp = TAILQ_NEXT(bp, bio_queue);
+	/*
+	 * After the first commands, the ordered bit terminates
+	 * our search because BIO_ORDERED acts like a barrier.
+	 */
+	if (bp == NULL || bp->bio_flags & BIO_ORDERED)
+		return NULL;
+	return bp;
+}
+
+static bool
+cam_iosched_rate_limited(struct iop_stats *ios)
+{
+	return ios->state_flags & IOP_RATE_LIMITED;
+}
+#endif
+
 /*
  * Determine what the next bit of work to do is for the periph. The
  * default implementation looks to see if we have trims to do, but no
@@ -1480,35 +1549,63 @@ cam_iosched_next_bio(struct cam_iosched_softc *isc)
 
 #ifdef CAM_IOSCHED_DYNAMIC
 	/*
-	 * See if we have any pending writes, and room in the queue for them,
-	 * and if so, those are next.
+	 * See if we have any pending writes, room in the queue for them,
+	 * and no pending reads (unless we've scheduled too many).
+	 * if so, those are next.
 	 */
 	if (do_dynamic_iosched) {
 		if ((bp = cam_iosched_get_write(isc)) != NULL)
 			return bp;
 	}
 #endif
-
 	/*
 	 * next, see if there's other, normal I/O waiting. If so return that.
 	 */
-	if ((bp = bioq_first(&isc->bio_queue)) == NULL)
-		return NULL;
-
 #ifdef CAM_IOSCHED_DYNAMIC
-	/*
-	 * For the dynamic scheduler, bio_queue is only for reads, so enforce
-	 * the limits here. Enforce only for reads.
-	 */
 	if (do_dynamic_iosched) {
-		if (bp->bio_cmd == BIO_READ &&
-		    cam_iosched_limiter_iop(&isc->read_stats, bp) != 0) {
-			isc->read_stats.state_flags |= IOP_RATE_LIMITED;
-			return NULL;
+		for (bp = bioq_first(&isc->bio_queue); bp != NULL;
+		     bp = bio_next(bp)) {
+			/*
+			 * For the dynamic scheduler with a read bias, bio_queue
+			 * is only for reads. However, without one, all
+			 * operations are queued. Enforce limits here for any
+			 * operation we find here.
+			 */
+			if (bp->bio_cmd == BIO_READ) {
+				if (cam_iosched_rate_limited(&isc->read_stats) ||
+				    cam_iosched_limiter_iop(&isc->read_stats, bp) != 0) {
+					isc->read_stats.state_flags |= IOP_RATE_LIMITED;
+					continue;
+				}
+				isc->read_stats.state_flags &= ~IOP_RATE_LIMITED;
+			}
+			/*
+			 * There can only be write requests on the queue when
+			 * the read bias is 0, but we need to process them
+			 * here. We do not assert for read bias == 0, however,
+			 * since it is dynamic and we can have WRITE operations
+			 * in the queue after we transition from 0 to non-zero.
+			 */
+			if (bp->bio_cmd == BIO_WRITE) {
+				if (cam_iosched_rate_limited(&isc->write_stats) ||
+				    cam_iosched_limiter_iop(&isc->write_stats, bp) != 0) {
+					isc->write_stats.state_flags |= IOP_RATE_LIMITED;
+					continue;
+				}
+				isc->write_stats.state_flags &= ~IOP_RATE_LIMITED;
+			}
+			/*
+			 * here we know we have a bp that's != NULL, that's not rate limited
+			 * and can be the next I/O.
+			 */
+			break;
 		}
-	}
-	isc->read_stats.state_flags &= ~IOP_RATE_LIMITED;
+	} else
 #endif
+		bp = bioq_first(&isc->bio_queue);
+
+	if (bp == NULL)
+		return (NULL);
 	bioq_remove(&isc->bio_queue, bp);
 #ifdef CAM_IOSCHED_DYNAMIC
 	if (do_dynamic_iosched) {
@@ -1516,8 +1613,11 @@ cam_iosched_next_bio(struct cam_iosched_softc *isc)
 			isc->read_stats.queued--;
 			isc->read_stats.total++;
 			isc->read_stats.pending++;
-		} else
-			printf("Found bio_cmd = %#x\n", bp->bio_cmd);
+		} else if (bp->bio_cmd == BIO_WRITE) {
+			isc->write_stats.queued--;
+			isc->write_stats.total++;
+			isc->write_stats.pending++;
+		}
 	}
 	if (iosched_debug > 9)
 		printf("HWQ : %p %#x\n", bp, bp->bio_cmd);
@@ -1593,7 +1693,8 @@ cam_iosched_queue_work(struct cam_iosched_softc *isc, struct bio *bp)
 #endif
 	}
 #ifdef CAM_IOSCHED_DYNAMIC
-	else if (do_dynamic_iosched && (bp->bio_cmd != BIO_READ)) {
+	else if (do_dynamic_iosched && isc->read_bias != 0 &&
+	    (bp->bio_cmd != BIO_READ)) {
 		if (cam_iosched_sort_queue(isc))
 			bioq_disksort(&isc->write_queue, bp);
 		else
@@ -1683,7 +1784,8 @@ cam_iosched_bio_complete(struct cam_iosched_softc *isc, struct bio *bp,
 			printf("Completing command with bio_cmd == %#x\n", bp->bio_cmd);
 	}
 
-	if (!(bp->bio_flags & BIO_ERROR) && done_ccb != NULL) {
+	if ((bp->bio_flags & BIO_ERROR) == 0 && done_ccb != NULL &&
+	    (done_ccb->ccb_h.status & CAM_QOS_VALID) != 0) {
 		sbintime_t sim_latency;
 		
 		sim_latency = cam_iosched_sbintime_t(done_ccb->ccb_h.qos.periph_data);
@@ -1789,20 +1891,25 @@ isqrt64(uint64_t val)
 }
 
 static sbintime_t latencies[LAT_BUCKETS - 1] = {
-	SBT_1MS <<  0,
-	SBT_1MS <<  1,
-	SBT_1MS <<  2,
-	SBT_1MS <<  3,
-	SBT_1MS <<  4,
-	SBT_1MS <<  5,
-	SBT_1MS <<  6,
-	SBT_1MS <<  7,
-	SBT_1MS <<  8,
-	SBT_1MS <<  9,
-	SBT_1MS << 10,
-	SBT_1MS << 11,
-	SBT_1MS << 12,
-	SBT_1MS << 13		/* 8.192s */
+	BUCKET_BASE <<  0,	/* 20us */
+	BUCKET_BASE <<  1,
+	BUCKET_BASE <<  2,
+	BUCKET_BASE <<  3,
+	BUCKET_BASE <<  4,
+	BUCKET_BASE <<  5,
+	BUCKET_BASE <<  6,
+	BUCKET_BASE <<  7,
+	BUCKET_BASE <<  8,
+	BUCKET_BASE <<  9,
+	BUCKET_BASE << 10,
+	BUCKET_BASE << 11,
+	BUCKET_BASE << 12,
+	BUCKET_BASE << 13,
+	BUCKET_BASE << 14,
+	BUCKET_BASE << 15,
+	BUCKET_BASE << 16,
+	BUCKET_BASE << 17,
+	BUCKET_BASE << 18	/* 5,242,880us */
 };
 
 static void
@@ -1822,7 +1929,7 @@ cam_iosched_update(struct iop_stats *iop, sbintime_t sim_latency)
 		}
 	}
 	if (i == LAT_BUCKETS - 1)
-		iop->latencies[i]++; 	 /* Put all > 1024ms values into the last bucket. */
+		iop->latencies[i]++; 	 /* Put all > 8192ms values into the last bucket. */
 
 	/*
 	 * Classic exponentially decaying average with a tiny alpha

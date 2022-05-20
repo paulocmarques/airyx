@@ -220,8 +220,7 @@ static driver_t arcmsr_driver={
 	"arcmsr", arcmsr_methods, sizeof(struct AdapterControlBlock)
 };
 
-static devclass_t arcmsr_devclass;
-DRIVER_MODULE(arcmsr, pci, arcmsr_driver, arcmsr_devclass, 0, 0);
+DRIVER_MODULE(arcmsr, pci, arcmsr_driver, 0, 0);
 MODULE_DEPEND(arcmsr, pci, 1, 1, 1);
 MODULE_DEPEND(arcmsr, cam, 1, 1, 1);
 #ifndef BUS_DMA_COHERENT		
@@ -240,12 +239,6 @@ static struct cdevsw arcmsr_cdevsw={
 */
 static int arcmsr_open(struct cdev *dev, int flags, int fmt, struct thread *proc)
 {
-	int	unit = dev2unit(dev);
-	struct AdapterControlBlock *acb = devclass_get_softc(arcmsr_devclass, unit);
-
-	if (acb == NULL) {
-		return ENXIO;
-	}
 	return (0);
 }
 /*
@@ -254,12 +247,6 @@ static int arcmsr_open(struct cdev *dev, int flags, int fmt, struct thread *proc
 */
 static int arcmsr_close(struct cdev *dev, int flags, int fmt, struct thread *proc)
 {
-	int	unit = dev2unit(dev);
-	struct AdapterControlBlock *acb = devclass_get_softc(arcmsr_devclass, unit);
-
-	if (acb == NULL) {
-		return ENXIO;
-	}
 	return 0;
 }
 /*
@@ -268,12 +255,8 @@ static int arcmsr_close(struct cdev *dev, int flags, int fmt, struct thread *pro
 */
 static int arcmsr_ioctl(struct cdev *dev, u_long ioctl_cmd, caddr_t arg, int flags, struct thread *proc)
 {
-	int	unit = dev2unit(dev);
-	struct AdapterControlBlock *acb = devclass_get_softc(arcmsr_devclass, unit);
+	struct AdapterControlBlock *acb = dev->si_drv1;
 
-	if (acb == NULL) {
-		return ENXIO;
-	}
 	return (arcmsr_iop_ioctlcmd(acb, ioctl_cmd, arg));
 }
 /*
@@ -624,12 +607,8 @@ static int arcmsr_resume(device_t dev)
 */
 static void arcmsr_async(void *cb_arg, u_int32_t code, struct cam_path *path, void *arg)
 {
-	struct AdapterControlBlock *acb;
 	u_int8_t target_id, target_lun;
-	struct cam_sim *sim;
 
-	sim = (struct cam_sim *) cb_arg;
-	acb =(struct AdapterControlBlock *) cam_sim_softc(sim);
 	switch (code) {
 	case AC_LOST_DEVICE:
 		target_id = xpt_path_target_id(path);
@@ -637,7 +616,6 @@ static void arcmsr_async(void *cb_arg, u_int32_t code, struct cam_path *path, vo
 		if((target_id > ARCMSR_MAX_TARGETID) || (target_lun > ARCMSR_MAX_TARGETLUN)) {
 			break;
 		}
-	//	printf("%s:scsi id=%d lun=%d device lost \n", device_get_name(acb->pci_dev), target_id, target_lun);
 		break;
 	default:
 		break;
@@ -4932,6 +4910,7 @@ irq_alloc_failed:
 */
 static int arcmsr_attach(device_t dev)
 {
+	struct make_dev_args args;
 	struct AdapterControlBlock *acb=(struct AdapterControlBlock *)device_get_softc(dev);
 	u_int32_t unit=device_get_unit(dev);
 	struct ccb_setasync csa;
@@ -4992,6 +4971,7 @@ irqx:
 	/*
 	****************************************************
 	*/
+	memset(&csa, 0, sizeof(csa));
 	xpt_setup_ccb(&csa.ccb_h, acb->ppath, /*priority*/5);
 	csa.ccb_h.func_code = XPT_SASYNC_CB;
 	csa.event_enable = AC_FOUND_DEVICE|AC_LOST_DEVICE;
@@ -5000,7 +4980,13 @@ irqx:
 	xpt_action((union ccb *)&csa);
 	ARCMSR_LOCK_RELEASE(&acb->isr_lock);
 	/* Create the control device.  */
-	acb->ioctl_dev = make_dev(&arcmsr_cdevsw, unit, UID_ROOT, GID_WHEEL /* GID_OPERATOR */, S_IRUSR | S_IWUSR, "arcmsr%d", unit);
+	make_dev_args_init(&args);
+	args.mda_devsw = &arcmsr_cdevsw;
+	args.mda_uid = UID_ROOT;
+	args.mda_gid = GID_WHEEL /* GID_OPERATOR */;
+	args.mda_mode = S_IRUSR | S_IWUSR;
+	args.mda_si_drv1 = acb;
+	(void)make_dev_s(&args, &acb->ioctl_dev, "arcmsr%d", unit);
 		
 	(void)make_dev_alias(acb->ioctl_dev, "arc%d", unit);
 	arcmsr_callout_init(&acb->devmap_callout);
@@ -5107,14 +5093,13 @@ static int arcmsr_probe(device_t dev)
 static int arcmsr_shutdown(device_t dev)
 {
 	u_int32_t  i;
-	u_int32_t intmask_org;
 	struct CommandControlBlock *srb;
 	struct AdapterControlBlock *acb=(struct AdapterControlBlock *)device_get_softc(dev);
 
 	/* stop adapter background rebuild */
 	ARCMSR_LOCK_ACQUIRE(&acb->isr_lock);
 	/* disable all outbound interrupt */
-	intmask_org = arcmsr_disable_allintr(acb);
+	arcmsr_disable_allintr(acb);
 	arcmsr_stop_adapter_bgrb(acb);
 	arcmsr_flush_adapter_cache(acb);
 	/* abort all outstanding command */

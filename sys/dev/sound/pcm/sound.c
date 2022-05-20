@@ -595,7 +595,7 @@ pcm_chn_create(struct snddev_info *d, struct pcm_channel *parent, kobj_class_t c
 int
 pcm_chn_destroy(struct pcm_channel *ch)
 {
-	struct snddev_info *d;
+	struct snddev_info *d __diagused;
 	int err;
 
 	d = ch->parentsnddev;
@@ -1171,9 +1171,7 @@ pcm_unregister(device_t dev)
 {
 	struct snddev_info *d;
 	struct pcm_channel *ch;
-	struct thread *td;
 
-	td = curthread;
 	d = device_get_softc(dev);
 
 	if (!PCM_ALIVE(d)) {
@@ -1427,13 +1425,11 @@ static int
 sound_modevent(module_t mod, int type, void *data)
 {
 	int ret;
-#if 0
-	return (midi_modevent(mod, type, data));
-#else
-	ret = 0;
 
-	switch(type) {
+	ret = 0;
+	switch (type) {
 		case MOD_LOAD:
+			pcm_devclass = devclass_create("pcm");
 			pcmsg_unrhdr = new_unrhdr(1, INT_MAX, NULL);
 			break;
 		case MOD_UNLOAD:
@@ -1449,7 +1445,6 @@ sound_modevent(module_t mod, int type, void *data)
 	}
 
 	return ret;
-#endif
 }
 
 DEV_MODULE(sound, sound_modevent, NULL);

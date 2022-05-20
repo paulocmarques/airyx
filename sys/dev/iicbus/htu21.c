@@ -300,13 +300,11 @@ htu21_set_cfg(device_t dev, uint8_t cfg)
 static int
 htu21_heater_sysctl(SYSCTL_HANDLER_ARGS)
 {
-	struct htu21_softc *sc;
 	device_t dev;
 	uint8_t cfg;
 	int error, heater;
 
 	dev = arg1;
-	sc = device_get_softc(dev);
 
 	if (req->oldptr != NULL) {
 		error = htu21_get_cfg(dev, &cfg);
@@ -327,13 +325,11 @@ htu21_heater_sysctl(SYSCTL_HANDLER_ARGS)
 static int
 htu21_power_sysctl(SYSCTL_HANDLER_ARGS)
 {
-	struct htu21_softc *sc;
 	device_t dev;
 	uint8_t cfg;
 	int error, power;
 
 	dev = arg1;
-	sc = device_get_softc(dev);
 
 	if (req->oldptr != NULL) {
 		error = htu21_get_cfg(dev, &cfg);
@@ -525,9 +521,7 @@ static driver_t htu21_driver = {
 	sizeof(struct htu21_softc)
 };
 
-static devclass_t htu21_devclass;
-
-DRIVER_MODULE(htu21, iicbus, htu21_driver, htu21_devclass, 0, 0);
+DRIVER_MODULE(htu21, iicbus, htu21_driver, 0, 0);
 MODULE_DEPEND(htu21, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
 MODULE_VERSION(htu21, 1);
 IICBUS_FDT_PNP_INFO(compat_data);

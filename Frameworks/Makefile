@@ -2,12 +2,12 @@ CIRRUS_BUILD_ID?= local
 MK_WERROR= no
 WARN?= 1
 WORLDTMP= /usr/obj/${TOPDIR}/${MACHINE}.${MACHINE}
-#CFLAGS+= -I ${WORLDTMP}/tmp/usr/include \
-CFLAGS+=	-B ${WORLDTMP}/usr/bin
+CFLAGS+= -I ${WORLDTMP}/tmp/usr/include
+#CFLAGS+=	-B ${WORLDTMP}/usr/bin
 LDFLAGS+= -B ${WORLDTMP}/usr/bin \
 	-L ${WORLDTMP}/tmp/lib -L ${WORLDTMP}/tmp/usr/lib
 
-.export WARN MK_WERROR CFLAGS
+.export WARN MK_WERROR CFLAGS LDFLAGS
 
 SUBDIR+=	setup .WAIT
 SUBDIR+=	CoreFoundation
@@ -34,7 +34,7 @@ package:
 	mkdir -p /tmp/meta
 	cd ${BUILDROOT}; find ./System/Library/Frameworks -not -type d | \
 	  sed 's@^\.@@' > /tmp/meta/pkg-plist
-	sed "s/%%VERSION%%/${AIRYX_VERSION}_${CIRRUS_BUILD_ID}/" < +MANIFEST \
+	sed "s/%%VERSION%%/${RAVYNOS_VERSION}_${CIRRUS_BUILD_ID}/" < +MANIFEST \
 	  > /tmp/meta/+MANIFEST
 	mkdir -p ${TOPDIR}/dist
 	pkg create -o ${TOPDIR}/dist/ -r ${BUILDROOT} -m /tmp/meta \

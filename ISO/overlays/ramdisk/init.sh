@@ -18,11 +18,11 @@ if [ "$(kenv boot_mute)" = "YES" ] ; then
       exec 1>>/dev/null 2>&1
 fi
 
-set -x
+#set -x
 
-AIRYX_VERSION=$(head -1 /version)
-AIRYX_CODENAME=$(tail -1 /version)
-echo "Hello. This is airyxOS ${AIRYX_VERSION} (${AIRYX_CODENAME})" > /dev/tty
+RAVYNOS_VERSION=$(head -1 /version)
+RAVYNOS_CODENAME=$(tail -1 /version)
+echo "Hello. This is ravynOS ${RAVYNOS_VERSION} (${RAVYNOS_CODENAME})" > /dev/tty
 
 echo "==> Ramdisk /init.sh running"
 
@@ -39,12 +39,12 @@ mkdir -p /cdrom
 
 echo "Waiting for Live media to appear"
 while : ; do
-    [ -e "/dev/iso9660/AIRYX" ] && echo "found /dev/iso9660/AIRYX" && break
+    [ -e "/dev/iso9660/RAVYNOS" ] && echo "found /dev/iso9660/RAVYNOS" && break
     sleep 1
 done
 
 echo "==> Mount /cdrom"
-mount_cd9660 /dev/iso9660/AIRYX /cdrom
+mount_cd9660 /dev/iso9660/RAVYNOS /cdrom
 
 echo "==> Configure md from system.uzip"
 mdconfig -u 1 -f /cdrom/data/system.uzip
@@ -95,11 +95,15 @@ for d in *; do
 done
 rm -f /System/Library/LaunchDaemons
 mkdir -p /System/Library/LaunchDaemons
-ln -s /sysroot/System/Library/LaunchDaemons/com.apple.auditd.json /System/Library/LaunchDaemons/
+#ln -s /sysroot/System/Library/LaunchDaemons/com.apple.auditd.json /System/Library/LaunchDaemons/
 ln -s /sysroot/System/Library/LaunchDaemons/com.apple.notifyd.json /System/Library/LaunchDaemons/
+ln -s /sysroot/System/Library/LaunchDaemons/org.freebsd.devd.json /System/Library/LaunchDaemons/
 for tty in 0 1 2 3; do
     cat > /System/Library/LaunchDaemons/org.freebsd.ttyv${tty}.json <<EOT
 {
+	"EnvironmentVariables": {
+		"ASL_DISABLE": "1"
+	},
 	"Label": "org.freebsd.getty.ttyv${tty}",
 	"ProgramArguments": [
 		"/usr/libexec/getty",
@@ -107,7 +111,7 @@ for tty in 0 1 2 3; do
 		"ttyv${tty}"
 	],
 	"RunAtLoad": true,
-	"KeepAlive": true
+	"KeepAlive": false
 }
 EOT
 done

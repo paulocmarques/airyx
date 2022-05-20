@@ -133,11 +133,8 @@ static device_method_t pcib_methods[] = {
     DEVMETHOD_END
 };
 
-static devclass_t pcib_devclass;
-
 DEFINE_CLASS_0(pcib, pcib_driver, pcib_methods, sizeof(struct pcib_softc));
-EARLY_DRIVER_MODULE(pcib, pci, pcib_driver, pcib_devclass, NULL, NULL,
-    BUS_PASS_BUS);
+EARLY_DRIVER_MODULE(pcib, pci, pcib_driver, NULL, NULL, BUS_PASS_BUS);
 
 #if defined(NEW_PCIB) || defined(PCI_HP)
 SYSCTL_DECL(_hw_pci);
@@ -1397,7 +1394,7 @@ pcib_setup_hotplug(struct pcib_softc *sc)
 	    pcib_pcie_cc_timeout, sc);
 	TIMEOUT_TASK_INIT(taskqueue_pci_hp, &sc->pcie_dll_task, 0,
 	    pcib_pcie_dll_timeout, sc);
-	sc->pcie_hp_lock = &Giant;
+	sc->pcie_hp_lock = bus_topo_mtx();
 
 	/* Allocate IRQ. */
 	if (pcib_alloc_pcie_irq(sc) != 0)

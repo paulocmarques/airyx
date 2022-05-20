@@ -207,8 +207,7 @@ static driver_t vmxnet3_driver = {
 	"vmx", vmxnet3_methods, sizeof(struct vmxnet3_softc)
 };
 
-static devclass_t vmxnet3_devclass;
-DRIVER_MODULE(vmx, pci, vmxnet3_driver, vmxnet3_devclass, 0, 0);
+DRIVER_MODULE(vmx, pci, vmxnet3_driver, 0, 0);
 IFLIB_PNP_INFO(pci, vmx, vmxnet3_vendor_info_array);
 MODULE_VERSION(vmx, 2);
 
@@ -540,12 +539,10 @@ vmxnet3_free_irqs(struct vmxnet3_softc *sc)
 static int
 vmxnet3_attach_post(if_ctx_t ctx)
 {
-	device_t dev;
 	if_softc_ctx_t scctx;
 	struct vmxnet3_softc *sc;
 	int error;
 
-	dev = iflib_get_dev(ctx);
 	scctx = iflib_get_softc_ctx(ctx);
 	sc = iflib_get_softc(ctx);
 
@@ -1047,7 +1044,6 @@ static void
 vmxnet3_init_shared_data(struct vmxnet3_softc *sc)
 {
 	struct vmxnet3_driver_shared *ds;
-	if_shared_ctx_t sctx;
 	if_softc_ctx_t scctx;
 	struct vmxnet3_txqueue *txq;
 	struct vmxnet3_txq_shared *txs;
@@ -1056,7 +1052,6 @@ vmxnet3_init_shared_data(struct vmxnet3_softc *sc)
 	int i;
 
 	ds = sc->vmx_ds;
-	sctx = sc->vmx_sctx;
 	scctx = sc->vmx_scctx;
 
 	/*
@@ -1157,7 +1152,6 @@ vmxnet3_reinit_rss_shared_data(struct vmxnet3_softc *sc)
 	    0x96, 0xa6, 0x9f, 0x8f, 0x9e, 0x8c, 0x90, 0xc9,
 	};
 
-	struct vmxnet3_driver_shared *ds;
 	if_softc_ctx_t scctx;
 	struct vmxnet3_rss_shared *rss;
 #ifdef RSS
@@ -1165,7 +1159,6 @@ vmxnet3_reinit_rss_shared_data(struct vmxnet3_softc *sc)
 #endif
 	int i;
 
-	ds = sc->vmx_ds;
 	scctx = sc->vmx_scctx;
 	rss = sc->vmx_rss;
 
@@ -1730,13 +1723,9 @@ static void
 vmxnet3_isc_rxd_flush(void *vsc, uint16_t rxqid, uint8_t flid, qidx_t pidx)
 {
 	struct vmxnet3_softc *sc;
-	struct vmxnet3_rxqueue *rxq;
-	struct vmxnet3_rxring *rxr;
 	bus_size_t r;
 
 	sc = vsc;
-	rxq = &sc->vmx_rxq[rxqid];
-	rxr = &rxq->vxrxq_cmd_ring[flid];
 
 	if (flid == 0)
 		r = VMXNET3_BAR0_RXH1(rxqid);

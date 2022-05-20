@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/rman.h>
 #include <sys/selinfo.h>
+#include <sys/efi.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -178,7 +179,7 @@ static driver_t ipmi_pci_driver = {
 	sizeof(struct ipmi_softc)
 };
 
-DRIVER_MODULE(ipmi_pci, pci, ipmi_pci_driver, ipmi_devclass, 0, 0);
+DRIVER_MODULE(ipmi_pci, pci, ipmi_pci_driver, 0, 0);
 
 /* Native IPMI on PCI driver. */
 
@@ -291,4 +292,7 @@ static driver_t ipmi2_pci_driver = {
 	sizeof(struct ipmi_softc)
 };
 
-DRIVER_MODULE(ipmi2_pci, pci, ipmi2_pci_driver, ipmi_devclass, 0, 0);
+DRIVER_MODULE(ipmi2_pci, pci, ipmi2_pci_driver, 0, 0);
+#ifdef ARCH_MAY_USE_EFI
+MODULE_DEPEND(ipmi2_pci, efirt, 1, 1, 1);
+#endif

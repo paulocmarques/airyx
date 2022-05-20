@@ -79,11 +79,7 @@ static int	acpi_timer_sysctl_freq(SYSCTL_HANDLER_ARGS);
 static void	acpi_timer_boot_test(void);
 
 static int	acpi_timer_test(void);
-#ifdef __i386__
-static int	acpi_timer_test_enabled = 1;
-#else
 static int	acpi_timer_test_enabled = 0;
-#endif
 TUNABLE_INT("hw.acpi.timer_test_enabled", &acpi_timer_test_enabled);
 
 static device_method_t acpi_timer_methods[] = {
@@ -100,8 +96,7 @@ static driver_t acpi_timer_driver = {
     0,
 };
 
-static devclass_t acpi_timer_devclass;
-DRIVER_MODULE(acpi_timer, acpi, acpi_timer_driver, acpi_timer_devclass, 0, 0);
+DRIVER_MODULE(acpi_timer, acpi, acpi_timer_driver, 0, 0);
 MODULE_DEPEND(acpi_timer, acpi, 1, 1, 1);
 
 static struct timecounter acpi_timer_timecounter = {

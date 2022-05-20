@@ -1900,8 +1900,6 @@ qat_probesession(device_t dev, const struct crypto_session_params *csp)
 	case CSP_MODE_AEAD:
 		switch (csp->csp_cipher_alg) {
 		case CRYPTO_AES_NIST_GCM_16:
-			if (csp->csp_ivlen != AES_GCM_IV_LEN)
-				return EINVAL;
 			break;
 		default:
 			return EINVAL;
@@ -2284,15 +2282,13 @@ static device_method_t qat_methods[] = {
 	DEVMETHOD_END
 };
 
-static devclass_t qat_devclass;
-
 static driver_t qat_driver = {
 	.name		= "qat",
 	.methods	= qat_methods,
 	.size		= sizeof(struct qat_softc),
 };
 
-DRIVER_MODULE(qat, pci, qat_driver, qat_devclass, 0, 0);
+DRIVER_MODULE(qat, pci, qat_driver, 0, 0);
 MODULE_VERSION(qat, 1);
 MODULE_DEPEND(qat, crypto, 1, 1, 1);
 MODULE_DEPEND(qat, pci, 1, 1, 1);

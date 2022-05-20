@@ -77,8 +77,8 @@ enum socket_qstate {
  * Locking key to struct socket:
  * (a) constant after allocation, no locking required.
  * (b) locked by SOCK_LOCK(so).
- * (cr) locked by SOCKBUF_LOCK(&so->so_rcv).
- * (cs) locked by SOCKBUF_LOCK(&so->so_snd).
+ * (cr) locked by SOCK_RECVBUF_LOCK(so)/SOCKBUF_LOCK(&so->so_rcv).
+ * (cs) locked by SOCK_SENDBUF_LOCK(so)/SOCKBUF_LOCK(&so->so_snd).
  * (e) locked by SOLISTEN_LOCK() of corresponding listening socket.
  * (f) not locked since integer reads/writes are atomic.
  * (g) used only as a sleep/wakeup address, no value.
@@ -91,13 +91,13 @@ struct socket {
 	volatile u_int	so_count;	/* (b / refcount) */
 	struct selinfo	so_rdsel;	/* (b/cr) for so_rcv/so_comp */
 	struct selinfo	so_wrsel;	/* (b/cs) for so_snd */
-	short	so_type;		/* (a) generic type, see socket.h */
 	int	so_options;		/* (b) from socket call, see socket.h */
-	short	so_linger;		/* time to linger close(2) */
+	short	so_type;		/* (a) generic type, see socket.h */
 	short	so_state;		/* (b) internal state flags SS_* */
 	void	*so_pcb;		/* protocol control block */
 	struct	vnet *so_vnet;		/* (a) network stack instance */
 	struct	protosw *so_proto;	/* (a) protocol handle */
+	short	so_linger;		/* time to linger close(2) */
 	short	so_timeo;		/* (g) connection timeout */
 	u_short	so_error;		/* (f) error affecting connection */
 	u_short so_rerror;		/* (f) error affecting connection */
@@ -121,6 +121,17 @@ struct socket {
 
 	int so_ts_clock;	/* type of the clock used for timestamps */
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
+
+	/*
+	 * Mutexes to prevent interleaving of socket I/O.  These have to be
+	 * outside of the socket buffers in order to interlock with listen(2).
+	 */
+	struct sx so_snd_sx __aligned(CACHE_LINE_SIZE);
+	struct mtx so_snd_mtx;
+
+	struct sx so_rcv_sx __aligned(CACHE_LINE_SIZE);
+	struct mtx so_rcv_mtx;
+
 	union {
 		/* Regular (data flow) socket. */
 		struct {
@@ -245,6 +256,35 @@ struct socket {
 } while (0)
 
 /*
+ * Socket buffer locks.  These manipulate the same mutexes as SOCKBUF_LOCK()
+ * and related macros.
+ */
+#define	SOCK_RECVBUF_MTX(so)						\
+	(&(so)->so_rcv_mtx)
+#define	SOCK_RECVBUF_LOCK(so)						\
+	mtx_lock(SOCK_RECVBUF_MTX(so))
+#define	SOCK_RECVBUF_UNLOCK(so)						\
+	mtx_unlock(SOCK_RECVBUF_MTX(so))
+#define	SOCK_RECVBUF_LOCK_ASSERT(so)					\
+	mtx_assert(SOCK_RECVBUF_MTX(so), MA_OWNED)
+#define	SOCK_RECVBUF_UNLOCK_ASSERT(so)					\
+	mtx_assert(SOCK_RECVBUF_MTX(so), MA_NOTOWNED)
+
+#define	SOCK_SENDBUF_MTX(so)						\
+	(&(so)->so_snd_mtx)
+#define	SOCK_SENDBUF_LOCK(so)						\
+	mtx_lock(SOCK_SENDBUF_MTX(so))
+#define	SOCK_SENDBUF_UNLOCK(so)						\
+	mtx_unlock(SOCK_SENDBUF_MTX(so))
+#define	SOCK_SENDBUF_LOCK_ASSERT(so)					\
+	mtx_assert(SOCK_SENDBUF_MTX(so), MA_OWNED)
+#define	SOCK_SENDBUF_UNLOCK_ASSERT(so)					\
+	mtx_assert(SOCK_SENDBUF_MTX(so), MA_NOTOWNED)
+
+/* 'which' values for socket buffer events and upcalls. */
+typedef enum { SO_RCV, SO_SND } sb_which;
+
+/*
  * Macros for sockets and socket buffering.
  */
 
@@ -255,17 +295,18 @@ struct socket {
 #define	SBL_NOINTR	0x00000002	/* Force non-interruptible sleep. */
 #define	SBL_VALID	(SBL_WAIT | SBL_NOINTR)
 
-
 #define	SBLOCKWAIT(f)	(((f) & MSG_DONTWAIT) ? 0 : SBL_WAIT)
 
 #define	SOCK_IO_SEND_LOCK(so, flags)					\
-	soiolock((so), &(so)->so_snd.sb_sx, (flags))
+	soiolock((so), &(so)->so_snd_sx, (flags))
 #define	SOCK_IO_SEND_UNLOCK(so)						\
-	soiounlock(&(so)->so_snd.sb_sx)
+	soiounlock(&(so)->so_snd_sx)
+#define	SOCK_IO_SEND_OWNED(so)	sx_xlocked(&(so)->so_snd_sx)
 #define	SOCK_IO_RECV_LOCK(so, flags)					\
-	soiolock((so), &(so)->so_rcv.sb_sx, (flags))
+	soiolock((so), &(so)->so_rcv_sx, (flags))
 #define	SOCK_IO_RECV_UNLOCK(so)						\
-	soiounlock(&(so)->so_rcv.sb_sx)
+	soiounlock(&(so)->so_rcv_sx)
+#define	SOCK_IO_RECV_OWNED(so)	sx_xlocked(&(so)->so_rcv_sx)
 
 /*
  * Do we need to notify the other side when I/O is possible?
@@ -301,11 +342,11 @@ struct socket {
  */
 #define	soref(so)	refcount_acquire(&(so)->so_count)
 #define	sorele(so) do {							\
-	SOCK_LOCK_ASSERT(so);						\
-	if (refcount_release(&(so)->so_count))				\
-		sofree(so);						\
-	else								\
-		SOCK_UNLOCK(so);					\
+	SOCK_UNLOCK_ASSERT(so);						\
+	if (!refcount_release_if_not_last(&(so)->so_count)) {		\
+		SOCK_LOCK(so);						\
+		sorele_locked(so);					\
+	}								\
 } while (0)
 
 /*
@@ -407,10 +448,6 @@ struct sockaddr;
 struct ucred;
 struct uio;
 
-/* 'which' values for socket upcalls. */
-#define	SO_RCV		1
-#define	SO_SND		2
-
 /* Return values for socket upcalls. */
 #define	SU_OK		0
 #define	SU_ISCONNECTED	1
@@ -445,6 +482,7 @@ void	sofree(struct socket *so);
 void	sohasoutofband(struct socket *so);
 int	solisten(struct socket *so, int backlog, struct thread *td);
 void	solisten_proto(struct socket *so, int backlog);
+void	solisten_proto_abort(struct socket *so);
 int	solisten_proto_check(struct socket *so);
 int	solisten_dequeue(struct socket *, struct socket **, int);
 struct socket *
@@ -466,6 +504,7 @@ int	soreceive_dgram(struct socket *so, struct sockaddr **paddr,
 int	soreceive_generic(struct socket *so, struct sockaddr **paddr,
 	    struct uio *uio, struct mbuf **mp0, struct mbuf **controlp,
 	    int *flagsp);
+void	sorele_locked(struct socket *so);
 int	soreserve(struct socket *so, u_long sndcc, u_long rcvcc);
 void	sorflush(struct socket *so);
 int	sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
@@ -478,8 +517,8 @@ int	sosend_generic(struct socket *so, struct sockaddr *addr,
 	    struct uio *uio, struct mbuf *top, struct mbuf *control,
 	    int flags, struct thread *td);
 int	soshutdown(struct socket *so, int how);
-void	soupcall_clear(struct socket *, int);
-void	soupcall_set(struct socket *, int, so_upcall_t, void *);
+void	soupcall_clear(struct socket *, sb_which);
+void	soupcall_set(struct socket *, sb_which, so_upcall_t, void *);
 void	solisten_upcall_set(struct socket *, so_upcall_t, void *);
 void	sowakeup(struct socket *so, struct sockbuf *sb);
 void	sowakeup_aio(struct socket *so, struct sockbuf *sb);

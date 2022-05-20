@@ -26,6 +26,8 @@
 #import <Onyx2D/O2Path.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "xdg-output-management-unstable-v1-client-protocol.h"
 #import "WLDisplay.h"
 
 @class CAWindowOpenGLContext;
@@ -40,8 +42,23 @@
     struct wl_registry *registry;
     struct xdg_wm_base *wm_base;
     struct wl_surface *wl_surface;
+    struct wl_seat *wl_seat;
     struct xdg_toplevel *xdg_toplevel;
     struct xdg_surface *xdg_surface; 
+
+    // subsurface support
+    struct wl_subcompositor *subcompositor;
+    struct wl_subsurface *wl_subsurface;
+    id parentWindow;
+
+    // wlroots layer shell support
+    struct zwlr_layer_shell_v1 *layer_shell;
+    struct zwlr_layer_surface_v1 *layer_surface;
+    uint32_t layerType;
+    uint32_t anchorType;
+    NSRect margins;
+    uint32_t exclusiveZone;
+    double layerAlpha;
 
     id _delegate;
     CGSBackingStoreType _backingType;
@@ -56,6 +73,9 @@
 
 - initWithFrame:(NSRect)frame styleMask:(unsigned)styleMask
         isPanel:(BOOL)isPanel backingType:(NSUInteger)backingType;
+- initWithFrame:(NSRect)frame styleMask:(unsigned)styleMask
+        isPanel:(BOOL)isPanel backingType:(NSUInteger)backingType
+        output:(struct wl_output *)wlo;
 - (O2Rect)frame;
 - (NSPoint)transformPoint:(NSPoint)pos;
 - (O2Rect)transformFrame:(O2Rect)frame;
@@ -65,10 +85,9 @@
 - (struct wl_surface *)wl_surface;
 - (void) set_wm_base:(struct xdg_wm_base *)base;
 - (void) set_compositor:(struct wl_compositor *)comp;
+- (void) set_subcompositor:(struct wl_subcompositor *)comp;
 - (void) setReady:(BOOL)ready;
 - (BOOL) isReady;
-
-- (void) decorateWindow;
 
 @end
 

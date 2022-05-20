@@ -147,8 +147,7 @@ static driver_t ioat_pci_driver = {
 	sizeof(struct ioat_softc),
 };
 
-static devclass_t ioat_devclass;
-DRIVER_MODULE(ioat, pci, ioat_pci_driver, ioat_devclass, ioat_modevent, NULL);
+DRIVER_MODULE(ioat, pci, ioat_pci_driver, ioat_modevent, NULL);
 MODULE_VERSION(ioat, 1);
 
 /*
@@ -716,10 +715,8 @@ ioat_setup_intr(struct ioat_softc *ioat)
 	uint32_t num_vectors;
 	int error;
 	boolean_t use_msix;
-	boolean_t force_legacy_interrupts;
 
 	use_msix = FALSE;
-	force_legacy_interrupts = FALSE;
 
 	if (!g_force_legacy_interrupts && pci_msix_count(ioat->device) >= 1) {
 		num_vectors = 1;
@@ -809,7 +806,7 @@ ioat_process_events(struct ioat_softc *ioat, boolean_t intr)
 	struct bus_dmadesc *dmadesc;
 	uint64_t comp_update, status;
 	uint32_t completed, chanerr;
-	int error;
+	int error __diagused;
 
 	if (intr) {
 		mtx_lock(&ioat->cleanup_lock);
@@ -948,14 +945,13 @@ static void
 ioat_reset_hw_task(void *ctx, int pending __unused)
 {
 	struct ioat_softc *ioat;
-	int error;
+	int error __diagused;
 
 	ioat = ctx;
 	ioat_log_message(1, "%s: Resetting channel\n", __func__);
 
 	error = ioat_reset_hw(ioat);
 	KASSERT(error == 0, ("%s: reset failed: %d", __func__, error));
-	(void)error;
 }
 
 /*

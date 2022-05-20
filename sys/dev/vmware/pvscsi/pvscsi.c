@@ -745,7 +745,7 @@ pvscsi_setup_msg_ring(struct pvscsi_softc *sc)
 static void
 pvscsi_adapter_reset(struct pvscsi_softc *sc)
 {
-	uint32_t val;
+	uint32_t val __unused;
 
 	device_printf(sc->dev, "Adapter Reset\n");
 
@@ -1423,7 +1423,8 @@ finish_ccb:
 		strlcpy(cpi->sim_vid, "VMware", SIM_IDLEN);
 		strlcpy(cpi->hba_vid, "VMware", HBA_IDLEN);
 		strlcpy(cpi->dev_name, cam_sim_name(sim), DEV_IDLEN);
-		cpi->maxio = PVSCSI_MAX_SG_ENTRIES_PER_SEGMENT * PAGE_SIZE;
+		/* Limit I/O to 256k since we can't do 512k unaligned I/O */
+		cpi->maxio = (PVSCSI_MAX_SG_ENTRIES_PER_SEGMENT / 2) * PAGE_SIZE;
 		cpi->protocol = PROTO_SCSI;
 		cpi->protocol_version = SCSI_REV_SPC2;
 		cpi->transport = XPORT_SAS;
@@ -1547,16 +1548,16 @@ pvscsi_free_all(struct pvscsi_softc *sc)
 {
 
 	if (sc->sim) {
-		int32_t status;
+		int error;
 
 		if (sc->bus_path) {
 			xpt_free_path(sc->bus_path);
 		}
 
-		status = xpt_bus_deregister(cam_sim_path(sc->sim));
-		if (status != CAM_REQ_CMP) {
+		error = xpt_bus_deregister(cam_sim_path(sc->sim));
+		if (error != 0) {
 			device_printf(sc->dev,
-			    "Error deregistering bus, status=%d\n", status);
+			    "Error deregistering bus, error %d\n", error);
 		}
 
 		cam_sim_free(sc->sim, TRUE);
@@ -1793,8 +1794,7 @@ static driver_t pvscsi_driver = {
 	"pvscsi", pvscsi_methods, sizeof(struct pvscsi_softc)
 };
 
-static devclass_t pvscsi_devclass;
-DRIVER_MODULE(pvscsi, pci, pvscsi_driver, pvscsi_devclass, 0, 0);
+DRIVER_MODULE(pvscsi, pci, pvscsi_driver, 0, 0);
 
 MODULE_DEPEND(pvscsi, pci, 1, 1, 1);
 MODULE_DEPEND(pvscsi, cam, 1, 1, 1);

@@ -47,6 +47,25 @@
 #import <xkbcommon/xkbcommon.h>
 #import <X11/keysym.h>
 
+const NSString *WLOutputNameKey = @"WLOutputName";
+const NSString *WLOutputDescriptionKey = @"WLOutputDescription";
+const NSString *WLOutputDimensionsKey = @"WLOutputDimensions";
+const NSString *WLOutputSizeKey = @"WLOutputSize";
+const NSString *WLOutputModesKey = @"WLOutputModes";
+const NSString *WLOutputCurrentModeKey = @"WLOutputCurrentMode";
+const NSString *WLOutputPositionKey = @"WLOutputPosition";
+const NSString *WLOutputTransformKey = @"WLOutputTransform";
+const NSString *WLOutputScaleKey = @"WLOutputScale";
+const NSString *WLOutputManufacturerKey = @"WLOutputManufacturer";
+const NSString *WLOutputModelKey = @"WLOutputModel";
+const NSString *WLOutputXDGOutputKey = @"WLOutputXDGOutput";
+
+const NSString *WLModeSizeKey = @"WLModeSize";
+const NSString *WLModeRefreshKey = @"WLModeRefresh";
+
+NSString *WLOutputDidResizeNotification = @"WLOutputDidResizeNotification";
+NSString *WLOutputDidMoveNotification = @"WLOutputDidMoveNotification";
+
 @implementation NSDisplay(WL)
 
 +allocWithZone:(NSZone *)zone {
@@ -56,6 +75,8 @@
 @end
 
 @implementation WLDisplay
+
+static WLDisplay *__WLDisplay = nil;
 
 static int errorHandler(struct wl_display *display,void *errorEvent) {
    return [(WLDisplay*)[WLDisplay currentDisplay] handleError:errorEvent];
@@ -113,10 +134,11 @@ static void handlePointerMotion(void *data, struct wl_pointer *ptr,
 static void handlePointerButton(void *data, struct wl_pointer *ptr,
     uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
     WLDisplay *display = (WLDisplay *)data;
-    [display pointerButton:button time:time state:state];
+    [display pointerButton:button time:time state:state serial:serial];
 }
 
 - (void) pointerButton:(uint32_t)button time:(uint32_t)time state:(uint32_t)state
+    serial:(uint32_t)serial
 {
     NSEventType type;
     switch(button) {
@@ -159,6 +181,7 @@ static void handlePointerButton(void *data, struct wl_pointer *ptr,
                              modifierFlags:[self modifierFlagsForState:xkb_state]
                                     window:delegate
                                 clickCount:clickCount deltaX:0.0 deltaY:0.0];
+    [event setSerialNumber:serial];
     [self postEvent:event atStart:NO];
 }
 
@@ -289,47 +312,8 @@ static unichar translateKeySym(xkb_keysym_t keysym)
     }
 }
 
-// repeatedly post keydown events until canceled
-static void repeatKeyInput(struct RepeatArgs *repeatKey) {
-    int charDelay = ((float)1.0/repeatKey->rate)*1000000;
-    int delay = repeatKey->delay * 1000;
-    NSEvent *orig = repeatKey->event;
-    NSEvent *eventDown = [NSEvent keyEventWithType:NSKeyDown
-                                      location:[orig locationInWindow]
-                                 modifierFlags:[orig modifierFlags]
-                                     timestamp:0.0
-                                  windowNumber:[orig windowNumber]
-                                       context:nil
-                                    characters:[orig characters]
-                   charactersIgnoringModifiers:[orig charactersIgnoringModifiers]
-                                     isARepeat:YES
-                                       keyCode:[orig keyCode]];
-
-    WLDisplay *display = repeatKey->display;
-    free(repeatKey);
-
-    usleep(delay);
-
-    for(;;) {
-        [display performSelectorOnMainThread:@selector(postKeyDown:) withObject:eventDown waitUntilDone:NO];
-        usleep(charDelay);
-    }
-}
-
-- (void)postKeyDown:(NSEvent*)eventDown
-{
-    [self postEvent:eventDown atStart:NO];
-    NSEvent *eventUp = [NSEvent keyEventWithType:NSKeyUp
-                                      location:[eventDown locationInWindow]
-                                 modifierFlags:[eventDown modifierFlags]
-                                     timestamp:0.0
-                                  windowNumber:[eventDown windowNumber]
-                                       context:nil
-                                    characters:[eventDown characters]
-                   charactersIgnoringModifiers:[eventDown charactersIgnoringModifiers]
-                                     isARepeat:YES
-                                       keyCode:[eventDown keyCode]];
-    [self postEvent:eventUp atStart:NO];
+-(void)startKeyRepeat:(NSTimer *)timer {
+    [self postEvent:repeatEvent atStart:NO];
 }
 
 - (void)keyboardInput:(uint32_t)keycode eventType:(NSEventType)type autoUp:(BOOL)autoUp
@@ -355,6 +339,10 @@ static void repeatKeyInput(struct RepeatArgs *repeatKey) {
     WLWindow *window = [self windowForID:(unsigned long)_keyboardActiveSurface];
     id delegate = [window delegate];
     
+    if(repeatEvent != nil) {
+        [repeatEvent release];
+        repeatEvent = nil;
+    }
     NSEvent *event = [NSEvent keyEventWithType:type
                                       location:pointerPosition
                                  modifierFlags:[self modifierFlagsForState:xkb_state]
@@ -366,7 +354,6 @@ static void repeatKeyInput(struct RepeatArgs *repeatKey) {
                                      isARepeat:NO
                                        keyCode:keycode];
     [self postEvent:event atStart:NO];
-    pthread_cancel(repeatThread);
 
     if(type == NSKeyDown) {
         if(autoUp == YES) {
@@ -384,13 +371,18 @@ static void repeatKeyInput(struct RepeatArgs *repeatKey) {
         } else {
             // set auto-repeat delay timer
             // FIXME: do not repeat modifier keys like Shift without a non-mod key
-            pthread_cancel(repeatThread);
-            struct RepeatArgs *repeatKey = malloc(sizeof(struct RepeatArgs));
-            repeatKey->event = event;
-            repeatKey->delay = repeatDelay;
-            repeatKey->rate = repeatRate;
-            repeatKey->display = self;
-            pthread_create(&repeatThread, NULL, repeatKeyInput, repeatKey);
+            repeatEvent = [[NSEvent keyEventWithType:NSKeyDown
+                                      location:[event locationInWindow]
+                                 modifierFlags:[event modifierFlags]
+                                     timestamp:0.0
+                                  windowNumber:[event windowNumber]
+                                       context:nil
+                                    characters:[event characters]
+                   charactersIgnoringModifiers:[event charactersIgnoringModifiers]
+                                     isARepeat:YES
+                                       keyCode:[event keyCode]] retain];
+            [NSTimer scheduledTimerWithInterval:(float)repeatDelay/1000 target:self
+                selector:@selector(startKeyRepeat:) userInfo:nil repeats:NO];
         }
     }
 }
@@ -463,8 +455,124 @@ static const struct wl_seat_listener wl_seat_listener = {
     .name = handle_seat_name,
 };
 
+
+static void handleWOMDone(void *data, struct wl_output *output) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:@"YES" forKey:@"WOMDone"];
+}
+
+static void handleWOMGeometry(void *data, struct wl_output *output, int32_t x, int32_t y,
+    int32_t width, int32_t height, int32_t subpixel, const char *make, const char *model,
+    int32_t transform) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:[NSString stringWithUTF8String:make] forKey:WLOutputManufacturerKey];
+    [dict setObject:[NSString stringWithUTF8String:model] forKey:WLOutputModelKey];
+    [dict setObject:[NSNumber numberWithInt:transform] forKey:WLOutputTransformKey];
+    [dict setObject:NSStringFromPoint(NSMakePoint(x, y)) forKey:WLOutputPositionKey];
+    [dict setObject:NSStringFromSize(NSMakeSize(width, height)) forKey:WLOutputDimensionsKey];
+}
+
+static void handleWOMScale(void *data, struct wl_output *output, int32_t scale) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:[NSNumber numberWithInt:scale] forKey:WLOutputScaleKey];
+}
+
+static void handleWOMMode(void *data, struct wl_output *output, uint32_t flags, int32_t width,
+    int32_t height, int32_t refresh) {
+    // refresh is in milliHertz...
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    NSMutableDictionary *mode = [NSMutableDictionary new];
+    [mode setObject:NSStringFromSize(NSMakeSize(width, height)) forKey:WLModeSizeKey];
+    [mode setObject:[NSNumber numberWithFloat:(float)refresh/1000] forKey:WLModeRefreshKey];
+    NSMutableDictionary *modes = [dict objectForKey:WLOutputModesKey];
+    if(modes == nil) {
+        modes = [NSMutableDictionary new];
+        [dict setObject:modes forKey:WLOutputModesKey];
+    }
+    [modes setObject:mode forKey:[NSString stringWithFormat:@"%dx%d@%d", width, height, refresh/1000]];
+    if(flags & WL_OUTPUT_MODE_CURRENT)
+        [dict setObject:mode forKey:WLOutputCurrentModeKey];
+}
+
+static const struct wl_output_listener wl_output_listener = {
+    .done = handleWOMDone,
+    .geometry = handleWOMGeometry,
+    .mode = handleWOMMode,
+    .scale = handleWOMScale,
+};
+
+static void handleOMName(void *data, struct zxdg_output_v1 *head, const char *s) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:[NSString stringWithUTF8String:s] forKey:WLOutputNameKey];
+}
+
+static void handleOMDescription(void *data, struct zxdg_output_v1 *head, const char *s) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:[NSString stringWithUTF8String:s] forKey:WLOutputDescriptionKey];
+}
+
+static void handleOMSize(void *data, struct zxdg_output_v1 *head, int32_t w, int32_t h) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:NSStringFromSize(NSMakeSize(w, h)) forKey:WLOutputSizeKey];
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:WLOutputDidResizeNotification object:nil userInfo:dict];
+}
+
+static void handleOMPosition(void *data, struct zxdg_output_v1 *head,
+    int32_t x, int32_t y) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:NSStringFromPoint(NSMakePoint(x, y)) forKey:WLOutputPositionKey];
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:WLOutputDidMoveNotification object:nil userInfo:dict];
+}
+
+static void handleOMDone(void *data, struct zxdg_output_v1 *head) {
+    NSMutableDictionary *dict = (NSMutableDictionary *)data;
+    [dict setObject:@"YES" forKey:@"OMDone"];
+}
+
+static const struct zxdg_output_v1_listener xdg_output_listener = {
+    .name = handleOMName,
+    .description = handleOMDescription,
+    .logical_size = handleOMSize,
+    .logical_position = handleOMPosition,
+    .done = handleOMDone,
+};
+
+static void handle_global(void *data, struct wl_registry *registry,
+		uint32_t name, const char *interface, uint32_t version) {
+    WLDisplay *display = (WLDisplay *)data;
+
+    if (strcmp(interface, wl_compositor_interface.name) == 0) {
+        [display set_compositor:wl_registry_bind(registry, name, &wl_compositor_interface, 1)];
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        struct wl_seat *seat = wl_registry_bind(registry, name, &wl_seat_interface, 7);
+        [display setSeat:seat];
+    } else if(strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
+        struct zxdg_output_manager_v1 *manager = wl_registry_bind(registry, name,
+            &zxdg_output_manager_v1_interface, 1);
+        [display setOutputManager:manager];
+    } else if(strcmp(interface, wl_output_interface.name) == 0) {
+        [display addWaylandOutput:wl_registry_bind(registry, name, &wl_output_interface, 3)];
+    }
+}
+
+static void handle_global_remove(void *data, struct wl_registry *registry,
+		uint32_t name) {
+	// FIXME: handle output removal
+}
+
+static const struct wl_registry_listener registry_listener = {
+	.global = handle_global,
+	.global_remove = handle_global_remove,
+};
+
 -init {
+    if(__WLDisplay != nil)
+        return __WLDisplay;
+
     if(self = [super init]) {
+        __WLDisplay = [self retain];
 
         if(getenv("XDG_RUNTIME_DIR") == NULL) {
             char *buf = 0;
@@ -480,6 +588,7 @@ static const struct wl_seat_listener wl_seat_listener = {
         _display = wl_display_connect(NULL);
         if(_display == NULL) {
             [self dealloc];
+            __WLDisplay = nil;
             return nil;
         }
         _seat = NULL;
@@ -494,18 +603,31 @@ static const struct wl_seat_listener wl_seat_listener = {
         xkb_state_unmodified = xkb_state_new(xkb_keymap);
         xkb_keymap_unref(xkb_keymap);
         
-        _fileDescriptor = -1;
-        _inputSource = nil; //[[NSSelectInputSource socketInputSourceWithSocket:[NSSocket_bsd socketWithDescriptor:_fileDescriptor]] retain];
+        _fileDescriptor = wl_display_get_fd(_display);
+        _inputSource = [[NSSelectInputSource socketInputSourceWithSocket:
+            [NSSocket_bsd socketWithDescriptor:_fileDescriptor]] retain];
         [_inputSource setDelegate:self];
         [_inputSource setSelectEventMask:NSSelectReadEvent];
       
         _windowsByID = [NSMutableDictionary new];
+        _outputs = [NSMutableDictionary new];
+        _outputManager = NULL;
 
         lastFocusedWindow = nil;
         _pointerActiveSurface = NULL;
         _keyboardActiveSurface = NULL;
         _lastClickTimeStamp = 0.0;
         clickCount = 0;
+        repeatEvent = nil;
+
+        registry = wl_display_get_registry(_display);
+        wl_registry_add_listener(registry, &registry_listener, (__bridge void *)self);
+        wl_display_roundtrip(_display);
+
+        if(compositor == NULL) {
+            NSLog(@"WLDisplay: compositor not available");
+            return nil;
+        }
     }
     return self;
 }
@@ -513,17 +635,46 @@ static const struct wl_seat_listener wl_seat_listener = {
 -(void)dealloc {
     if(_display)
         wl_display_disconnect(_display);
+    if(_outputManager)
+        zxdg_output_manager_v1_destroy(_outputManager);
+    if(registry)
+        wl_registry_destroy(registry);
     
     [_windowsByID release];
     [super dealloc];
 }
 
+-(struct wl_output *)wlOutputWithXDGKey:(NSNumber *)key {
+    if(key == nil)
+        return NULL;
+
+    NSArray *keys = [_outputs allKeys];
+    NSArray *vals = [_outputs allValues];
+
+    for(int i = 0; i < [keys count]; ++i) {
+        NSDictionary *d = [vals objectAtIndex:i];
+        if([[d objectForKey:WLOutputXDGOutputKey] isEqualTo:key])
+            return (struct wl_output *)[[keys objectAtIndex:i] longValue];
+    }
+    return NULL;
+}
+
+-(CGWindow *)windowWithFrame:(NSRect)frame styleMask:(unsigned)styleMask backingType:(unsigned)backingType screen:(NSScreen *)screen {
+        struct wl_output *output = [self wlOutputWithXDGKey:[screen key]]; 
+	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:NO backingType:backingType output:output] autorelease];
+}
+
 -(CGWindow *)windowWithFrame:(NSRect)frame styleMask:(unsigned)styleMask backingType:(unsigned)backingType {
-	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:NO backingType:backingType] autorelease];
+	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:NO backingType:backingType output:NULL] autorelease];
+}
+
+-(CGWindow *)panelWithFrame:(NSRect)frame styleMask:(unsigned)styleMask backingType:(unsigned)backingType screen:(NSScreen *)screen {
+        struct wl_output *output = [self wlOutputWithXDGKey:[screen key]]; 
+	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:YES backingType:backingType output:output] autorelease];
 }
 
 -(CGWindow *)panelWithFrame:(NSRect)frame styleMask:(unsigned)styleMask backingType:(unsigned)backingType {
-	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:YES backingType:backingType] autorelease];
+	return [[[WLWindow alloc] initWithFrame:frame styleMask:styleMask isPanel:YES backingType:backingType output:NULL] autorelease];
 }
 
 -(struct wl_display *)display {
@@ -531,10 +682,29 @@ static const struct wl_seat_listener wl_seat_listener = {
 }
 
 -(NSArray *)screens {
-   NSRect frame=NSMakeRect(0, 0, 1920, 1080); // FIXME: get this from WindowServer or "new output" events?
-                           //DisplayWidth(_display, DefaultScreen(_display)),
-                           //DisplayHeight(_display, DefaultScreen(_display)));
-   return [NSArray arrayWithObject:[[[NSScreen alloc] initWithFrame:frame visibleFrame:frame] autorelease]];
+    NSArray *keys = [_outputs allKeys];
+    int numHeads = [keys count];
+
+    // if we haven't been told how many heads we have yet, fake it to avoid a crash
+    if(numHeads <= 0) {
+        NSRect frame = NSMakeRect(0, 0, 1024, 768);
+        return [NSArray arrayWithObject:[[[NSScreen alloc]
+            initWithFrame:frame visibleFrame:frame] autorelease]];
+    }
+
+    NSMutableArray *scr = [NSMutableArray arrayWithCapacity:numHeads];
+
+    for(int i = 0; i < numHeads; ++i) {
+        NSString *key = [keys objectAtIndex:i];
+        NSDictionary *d = [_outputs objectForKey:key];
+        NSDictionary *mode = [d objectForKey:WLOutputCurrentModeKey];
+        NSRect frame = NSMakeRect(0, 0, 0, 0);
+        frame.size = NSSizeFromString([mode objectForKey:WLModeSizeKey]);
+        frame.origin = NSPointFromString([d objectForKey:WLOutputPositionKey]);
+        [scr addObject:[[[NSScreen alloc] initWithFrame:frame visibleFrame:frame
+            outputKey:[d objectForKey:WLOutputXDGOutputKey]] autorelease]];
+    }
+    return [NSArray arrayWithArray:scr];
 }
 
 -(NSPasteboard *)pasteboardWithName:(NSString *)name {
@@ -753,6 +923,40 @@ static const struct wl_seat_listener wl_seat_listener = {
       [_windowsByID removeObjectForKey:[NSNumber numberWithUnsignedLong:(unsigned long)i]];
 }
 
+-(void) set_compositor:(struct wl_compositor *)comp
+{
+    compositor = comp;
+}
+
+- (void)addWaylandOutput:(struct wl_output *)output
+{
+    NSMutableDictionary *dict = [NSMutableDictionary new];
+
+    wl_output_add_listener(output, &wl_output_listener, (void *)dict);
+    if(_outputManager) {
+        struct zxdg_output_v1 *xdgOut = zxdg_output_manager_v1_get_xdg_output(_outputManager, output);
+        zxdg_output_v1_add_listener(xdgOut, &xdg_output_listener, (void *)dict);
+        [dict setObject:[NSNumber numberWithUnsignedLong:(uintptr_t)xdgOut] forKey:WLOutputXDGOutputKey];
+    }
+
+    [_outputs setObject:dict forKey:[NSNumber numberWithUnsignedLong:(uintptr_t)output]];
+}
+
+- (void)setOutputManager:(struct zxdg_output_manager_v1 *)manager
+{
+    _outputManager = manager;
+    NSArray *keys = [_outputs allKeys];
+    for(int i = 0; i < [keys count]; ++i) {
+        NSDictionary *d = [_outputs objectForKey:[keys objectAtIndex:i]];
+        if([d objectForKey:WLOutputXDGOutputKey] == nil) {
+            struct wl_output *output = (struct wl_output *)[[keys objectAtIndex:i] longValue];
+            struct zxdg_output_v1 *xdgOut = zxdg_output_manager_v1_get_xdg_output(_outputManager, output);
+            zxdg_output_v1_add_listener(xdgOut, &xdg_output_listener, (void *)d);
+            [d setObject:[NSNumber numberWithUnsignedLong:(uintptr_t)xdgOut] forKey:WLOutputXDGOutputKey];
+        }
+    }
+}
+
 - (void)setSeat:(struct wl_seat *)seat
 {
     _seat = seat;
@@ -781,6 +985,11 @@ static const struct wl_seat_listener wl_seat_listener = {
         wl_keyboard_add_listener(_keyboard, &wl_keyboard_listener, (void *)self);
     } else
         _keyboard = NULL;
+}
+
+- (struct wl_seat *)seat
+{
+    return _seat;
 }
 
 - (void)enterSurface:(struct wl_surface *)surface device:(WLInputDevice)device
@@ -844,36 +1053,17 @@ static const struct wl_seat_listener wl_seat_listener = {
 
 -(NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
     NSEvent *result;
-    static NSEvent *event = nil;
-    if(event == nil)
-        event = [[NSEvent alloc] initWithType:NSAppKitSystem
-        location:NSMakePoint(0,0) modifierFlags:0 window:nil];
+    NSRunLoop *loop = [NSRunLoop currentRunLoop];
 
-    while(wl_display_prepare_read(_display) != 0)
-        wl_display_dispatch_pending(_display);
-    wl_display_flush(_display);
+    if(repeatEvent != nil) {
+        int charDelay = ((float)1.0/repeatRate) * 1000000;
+        [self postEvent:repeatEvent atStart:NO];
+        usleep(charDelay);
+    } 
 
-    struct pollfd pfd;
-    pfd.fd = wl_display_get_fd(_display);
-    pfd.events = POLLIN;
-    pfd.revents = POLLIN;
-
-    if(poll(&pfd, 1, 0) > 0) {
-        wl_display_read_events(_display);
-    } else {
-        wl_display_cancel_read(_display);
-    }
-
-    wl_display_dispatch_pending(_display);
-
-    // wake up the main event loop so we don't block
-    // FIXME: there must be a more optimal way to do this
-    [self postEvent:event atStart:NO];
-
-    [[NSRunLoop currentRunLoop] addInputSource:_inputSource forMode:mode];
+    [loop addInputSource:_inputSource forMode:mode];
     result = [super nextEventMatchingMask:mask untilDate:untilDate inMode:mode dequeue:dequeue];
-    [[NSRunLoop currentRunLoop] removeInputSource:_inputSource forMode:mode];
-   
+    [loop removeInputSource:_inputSource forMode:mode]; 
     return result;
 }
 
@@ -902,12 +1092,6 @@ NSArray *CGSOrderedWindowNumbers() {
 
 #if 0 // FIXME: this belongs in compositor?
 -(void)postXEvent:(XEvent *)ev {
-    case KeyPress:
-    case KeyRelease:;
-     unsigned int modifierFlags=[self modifierFlagsForState:ev->xkey.state];
-
-     }
-
     case FocusIn:
      if([delegate attachedSheet]) {
       [[delegate attachedSheet] makeKeyAndOrderFront:delegate];
@@ -956,6 +1140,11 @@ NSArray *CGSOrderedWindowNumbers() {
 #endif
 
 -(void)selectInputSource:(NSSelectInputSource *)inputSource selectEvent:(NSUInteger)selectEvent {
+    while(wl_display_prepare_read(_display) != 0)
+        wl_display_dispatch_pending(_display);
+    wl_display_flush(_display);
+    wl_display_read_events(_display);
+    wl_display_dispatch_pending(_display);
     //[self postXEvent:&e];
 }
 

@@ -1,59 +1,65 @@
-APP=	WindowServer
-SRCS=           main.c \
-                xdg-shell.c \
-                wlr-screencopy-unstable-v1.c \
-                WindowServer.c
-
-RESOURCES=      ${MAKEOBJDIR}/wlroots/libwlroots.so.11
-RESOURCES+=	${.CURDIR}/Icon.png
+APP=	        WindowServer
+SRCS=           WindowServer.m \
+                waybox/waybox/config.c \
+                waybox/waybox/cursor.c \
+                waybox/waybox/decoration.c \
+                waybox/waybox/layer_shell.c \
+                waybox/waybox/output.c \
+                waybox/waybox/seat.c \
+                waybox/waybox/server.c \
+                waybox/waybox/xdg_shell.c \
+                Desktop/AppDelegate.m \
+                Desktop/ClockView.m \
+                Desktop/MenuView.m \
+                Desktop/ExtrasView.m \
+                Desktop/DesktopWindow.m \
+                Desktop/MenuBarWindow.m
+RESOURCES=	${.CURDIR}/Icon.png ${.CURDIR}/ws.conf ${.CURDIR}/ravynos-mark-64.png
 
 MK_WERROR=	no
-PKGCONFIGS=     freetype2 pixman-1 xkbcommon
-PKGCONFIG_CFLAGS!=     pkg-config --cflags ${PKGCONFIGS}
-PKGCONFIG_LIBS!=       pkg-config --libs ${PKGCONFIGS}
-CFLAGS+=	-g -fPIC -fobjc-arc ${PKGCONFIG_CFLAGS} -I/usr/include/fontconfig \
-                -I/usr/src/Frameworks/Onyx2D -I${.CURDIR}/wlroots/include \
-                -I${.CURDIR} -I${MAKEOBJDIR} -DWLR_USE_UNSTABLE \
-                -framework Onyx2D -framework OpenGL
-LDFLAGS+=	-framework Foundation -framework OpenGL \
-                -framework Onyx2D -framework CoreGraphics -framework CoreFoundation \
-                -L${MAKEOBJDIR}/wlroots -lwlroots -Wl,-R'$$ORIGIN/../Resources' \
-                -lEGL -lEGL_mesa -lGLESv2 ${PKGCONFIG_LIBS} -lfontconfig -lobjc -lmach -lwayland-server
-WLPROTOS=       ${.CURDIR}/wlroots/wayland-protocols
+WARNS=	        1
+CFLAGS_XML2!=   pkg-config --cflags libxml-2.0
+LDFLAGS_XML2!=  pkg-config --libs libxml-2.0
+CFLAGS+=	-g -fobjc-arc -I${.CURDIR} -I${.CURDIR}/waybox/include -I${MAKEOBJDIR} \
+		-I${.CURDIR}/wlroots/include -I${.CURDIR}/waybox/waybox \
+                -I${MAKEOBJDIR}/wlroots/include -DWLR_USE_UNSTABLE \
+                -I/usr/include/pixman-1 -I${MAKEOBJDIR}/wlroots/protocol/ \
+                ${CFLAGS_XML2} \
+                -framework Foundation -framework AppKit
+LDFLAGS+=	-Wl,-R'$$ORIGIN/../Resources' ${LDFLAGS_XML2} \
+		-L${MAKEOBJDIR}/wlroots -lwlroots \
+                -lobjc -lwayland-client -lwayland-server -lSystem -lxkbcommon -lseat
+WLPROTOS=       ${.CURDIR}/wayland-protocols
+WLR_VER!=       grep version: ${.CURDIR}/wlroots/meson.build|sed -e '1s/[^0-9.]*//g;q'
 
-xdg-shell-protocol.h:
-	wayland-scanner server-header \
-                ${WLPROTOS}/stable/xdg-shell/xdg-shell.xml ${.TARGET}
+build-wayland-protos:
+	cd ${WLPROTOS} && meson ${MAKEOBJDIR}/wayland-protocols
+	ninja -C ${MAKEOBJDIR}/wayland-protocols
 
-xdg-shell.c:
-	wayland-scanner private-code \
-                ${WLPROTOS}/stable/xdg-shell/xdg-shell.xml ${.TARGET}
-
-wlr-screencopy-unstable-v1.h:
-	wayland-scanner server-header \
-                ${.CURDIR}/wlroots/protocol/wlr-screencopy-unstable-v1.xml ${.TARGET}
-
-wlr-screencopy-unstable-v1.c:
-	wayland-scanner private-code \
-                ${.CURDIR}/wlroots/protocol/wlr-screencopy-unstable-v1.xml ${.TARGET}
-
-build-wlroots:
-	cd ${.CURDIR}/wlroots && PKG_CONFIG_PATH=. meson -Dexamples=false \
-                -Dbackends=drm,libinput ${MAKEOBJDIR}/wlroots/
+build-wlroots: build-wayland-protos
+	cd ${.CURDIR}/wlroots && PKG_CONFIG_PATH=${MAKEOBJDIR}/wayland-protocols meson -Dexamples=false \
+                ${MAKEOBJDIR}/wlroots/
 	ninja -C ${MAKEOBJDIR}/wlroots
+	sed -e 's,@CURDIR@,${.CURDIR},g' -e 's,@MAKEOBJDIR@,${MAKEOBJDIR},g' -e 's,@VERSION@,${WLR_VER},g' \
+                < ${.CURDIR}/wlroots.pc.in > ${MAKEOBJDIR}/wlroots/wlroots.pc
+	cp -afv ${MAKEOBJDIR}/wlroots/libwlroots.so* ${.CURDIR}/${APP_DIR}/Contents/Resources/
+
+build-waybox:
+	cd ${.CURDIR}/waybox && PKG_CONFIG_PATH=${MAKEOBJDIR}/wayland-protocols:${MAKEOBJDIR}/wlroots \
+                meson ${MAKEOBJDIR}/waybox
+	ninja -C ${MAKEOBJDIR}/waybox
 
 clean-wlroots:
 	rm -rf ${MAKEOBJDIR}/wlroots
 
+clean-waybox:
+	rm -rf ${MAKEOBJDIR}/waybox
+
 clean-deps:
 	rm -f .depend.*
 
-clean-gen-files:
-	rm -f xdg-shell-protocol.h xdg-shell.c
+.include <rvn.app.mk>
 
-.include <airyx.app.mk>
-
-${OBJS}: build-wlroots xdg-shell-protocol.h xdg-shell.c \
-        wlr-screencopy-unstable-v1.c wlr-screencopy-unstable-v1.h
-clean: clean-wlroots clean-deps clean-gen-files
+${OBJS}: build-wlroots build-waybox
+clean: clean-wlroots clean-deps clean-waybox
 

@@ -296,6 +296,13 @@ static int
 		goto fail;
 	}
 
+	rv = clk_set_assigned(dev, ofw_bus_get_node(dev));
+	if (rv != 0 && rv != ENOENT) {
+		device_printf(dev, "clk_set_assigned failed: %d\n", rv);
+		rv = ENXIO;
+		goto fail;
+	}
+
 	rv = clk_get_by_ofw_name(sc->dev, 0, "refclk", &sc->clk_ref);
 	if (rv != 0) {
 		device_printf(sc->dev, "Cannot get 'refclk' clock\n");
@@ -357,7 +364,5 @@ static device_method_t rk_pcie_phy_methods[] = {
 DEFINE_CLASS_0(rk_pcie_phy, rk_pcie_phy_driver, rk_pcie_phy_methods,
     sizeof(struct rk_pcie_phy_softc));
 
-static devclass_t rk_pcie_phy_devclass;
-EARLY_DRIVER_MODULE(rk_pcie_phy, simplebus, rk_pcie_phy_driver,
-    rk_pcie_phy_devclass, NULL, NULL,
+EARLY_DRIVER_MODULE(rk_pcie_phy, simplebus, rk_pcie_phy_driver, NULL, NULL,
     BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_MIDDLE);
