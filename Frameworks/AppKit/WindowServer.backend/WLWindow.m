@@ -54,7 +54,7 @@ void CGNativeBorderFrameWidthsForStyle(unsigned styleMask,CGFloat *top,CGFloat *
             break;
         // FIXME: tool window style?
         default:
-            *top=44;
+            *top=30;
             *left=0;
             *bottom=0;
             *right=0;
@@ -74,6 +74,9 @@ static void handle_global(void *data, struct wl_registry *registry,
         [win set_wm_base:wl_registry_bind(registry, name, &xdg_wm_base_interface, 1)];
     } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
         [win set_layer_shell:wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 4)];
+    } else if(strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
+        [win setDecorationManager:wl_registry_bind(registry, name,
+            &zxdg_decoration_manager_v1_interface, 1)];
     }
 }
 
@@ -109,7 +112,7 @@ static void layer_surface_configure(void *data,
 
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface) {
     WLWindow *win = (WLWindow *)data;
-    [win release];
+    [[win delegate] platformWindowWillClose:win];
 }
 
 struct zwlr_layer_surface_v1_listener layer_surface_listener = {
@@ -150,8 +153,27 @@ static void xdg_toplevel_handle_configure(void *data,
     }
 }
 
+static void xdg_toplevel_handle_close(void *data,
+    struct xdg_toplevel *xdg_toplevel) {
+    WLWindow *win = (__bridge WLWindow *)data;
+    [[win delegate] platformWindowWillClose:win];
+}
+
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
     .configure = xdg_toplevel_handle_configure,
+    .close = xdg_toplevel_handle_close,
+};
+
+static void decoration_configure(void *data,
+    struct zxdg_toplevel_decoration_v1 *decoration,
+    enum zxdg_toplevel_decoration_v1_mode mode)
+{
+    WLWindow *win = (__bridge WLWindow *)data;
+    [win setDecorationMode:mode];
+}
+
+static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {
+    .configure = decoration_configure,
 };
 
 static void
@@ -202,6 +224,10 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     layer_surface = NULL;
     wl_subsurface = NULL;
     parentWindow = nil;
+    decorationManager = NULL;
+    decoration = NULL;
+    preferredMode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+    currentMode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
 
     _display = (WLDisplay *)[NSDisplay currentDisplay];
     struct wl_display *display = [_display display];
@@ -250,10 +276,18 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     } else if(!(_styleMask & WLWindowPopUp)) {
         xdg_surface = xdg_wm_base_get_xdg_surface(wm_base, wl_surface);
         xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
+        if(decorationManager) {
+            decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+                decorationManager, xdg_toplevel);
+            [self requestPreferredDecorations];
+        }
         xdg_surface_add_listener(xdg_surface, &xdg_surface_listener,
             (__bridge void *)self);
         xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener,
             (__bridge void *)self);
+        if(decorationManager)
+            zxdg_toplevel_decoration_v1_add_listener(decoration,
+                &decoration_listener, self);
     }
     // if WLWindowPopUp we fall through to here
 
@@ -264,16 +298,33 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 
 -(void)_destroySurface
 {
-    if(xdg_toplevel)
+    if(xdg_toplevel) {
         xdg_toplevel_destroy(xdg_toplevel);
-    if(wl_subsurface)
+        xdg_toplevel = NULL;
+    }
+    if(wl_subsurface) {
         wl_subsurface_destroy(wl_subsurface);
-    if(xdg_surface)
+        wl_subsurface = NULL;
+    }
+    if(layer_surface) {
+        zwlr_layer_surface_v1_destroy(layer_surface);
+        layer_surface = NULL;
+    }
+    if(xdg_surface) {
         xdg_surface_destroy(xdg_surface);
-    if(wl_surface)
+        xdg_surface = NULL;
+    }
+    if(wl_surface) {
         wl_surface_destroy(wl_surface);
+        wl_surface = NULL;
+    }
     [self setReady:NO];
     [_display setWindow:nil forID:(uintptr_t)wl_surface];
+}
+
+-(void)close {
+    [self _destroySurface];
+    [self release];
 }
 
 -(void)dealloc
@@ -282,8 +333,6 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     [self _destroySurface];
     if(registry)
         wl_registry_destroy(registry);
-    if(layer_surface)
-        zwlr_layer_surface_v1_destroy(layer_surface);
     [super dealloc];
 }
 
@@ -300,9 +349,13 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     }
     parentWindow = window;
 
+    if(wl_subsurface)
+        wl_subsurface_destroy(wl_subsurface);
+
     wl_subsurface = wl_subcompositor_get_subsurface(subcompositor, wl_surface,
         parentSurface);
     wl_subsurface_set_desync(wl_subsurface);
+    // FIXME: adjust point by screen position/output layout & remove hack from NSMainMenuView
     NSPoint point = NSMakePoint(_frame.origin.x, [window frame].size.height - _frame.origin.y
         - _frame.size.height );
     wl_subsurface_set_position(wl_subsurface, point.x, point.y);
@@ -371,6 +424,25 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 -(void) set_subcompositor:(struct wl_subcompositor *)comp
 {
     subcompositor = comp;
+}
+
+-(void) setDecorationManager:(struct zxdg_decoration_manager_v1 *)dm
+{
+    decorationManager = dm;
+}
+
+-(void) requestPreferredDecorations
+{
+    if(preferredMode == 0) { // use compositor preferred mode
+        zxdg_toplevel_decoration_v1_unset_mode(decoration);
+    } else if(preferredMode != currentMode) {
+        zxdg_toplevel_decoration_v1_set_mode(decoration, preferredMode);
+    }
+}
+
+-(void) setDecorationMode:(enum zxdg_toplevel_decoration_v1_mode)mode
+{
+    currentMode = mode;
 }
 
 -(unsigned) styleMask
@@ -446,7 +518,7 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
             _caContext = NULL;
             CGLReleaseContext(_cglContext);
             _cglContext = NULL;
-            [self _buildSurface];
+            [self _buildSurface:NULL];
             [self createCGLContextObjIfNeeded];
             if(parentWindow) {
                 [self setParent:parentWindow];
@@ -652,6 +724,7 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 
 - (void)requestMove:(NSEvent *)event
 {
+    [[self delegate] platformWindowWillMove:self];
     if(xdg_toplevel)
         xdg_toplevel_move(xdg_toplevel, [_display seat], [event serialNumber]);
 }

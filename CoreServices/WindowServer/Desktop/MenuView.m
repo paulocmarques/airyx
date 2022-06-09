@@ -21,7 +21,9 @@
  */
 
 #import <AppKit/AppKit.h>
+#import <Foundation/NSPlatform.h>
 #import "desktop.h"
+#import "AboutWindow.h"
 
 @interface NSMenu(private)
 -(NSString *)_name;
@@ -36,11 +38,43 @@
     NSRect frame = [[NSScreen mainScreen] visibleFrame];
 
     self = [super initWithFrame:NSMakeRect(0, 0, frame.size.width/2, menuBarHeight)];
+    aboutWindow = nil;
+
+    NSMenuItem *item;
+    sysMenu = [NSMenu new];
+    [sysMenu setDelegate:self];
+    [sysMenu setAutoenablesItems:YES];
+    [[sysMenu addItemWithTitle:@"About This Computer" action:@selector(aboutThisComputer:) 
+        keyEquivalent:@""] setTarget:self];
+    [[sysMenu addItemWithTitle:@"System Preferences..." action:NULL keyEquivalent:@""]
+        setTarget:self];
+    [[sysMenu addItemWithTitle:@"Software Store..." action:NULL keyEquivalent:@""] setEnabled:NO];
+    [sysMenu addItem:[NSMenuItem separatorItem]];
+    [[sysMenu addItemWithTitle:@"Recent Items" action:NULL keyEquivalent:@""] setTarget:self];
+    [sysMenu addItem:[NSMenuItem separatorItem]];
+    [[sysMenu addItemWithTitle:@"Force Quit..." action:NULL keyEquivalent:@""] setTarget:self];
+    [sysMenu addItem:[NSMenuItem separatorItem]];
+    [[sysMenu addItemWithTitle:@"Sleep" action:NULL keyEquivalent:@""] setTarget:self];
+    [[sysMenu addItemWithTitle:@"Restart..." action:NULL keyEquivalent:@""] setTarget:self];
+    [[sysMenu addItemWithTitle:@"Shut Down..." action:NULL keyEquivalent:@""] setTarget:self];
+    [sysMenu addItem:[NSMenuItem separatorItem]];
+    [[sysMenu addItemWithTitle:@"Lock Screen" action:NULL keyEquivalent:@""] setTarget:self];
+    [[sysMenu addItemWithTitle:@"Log Out" action:NULL keyEquivalent:@""] setTarget:self];
+
     NSString *ravyn = [[NSBundle mainBundle] pathForResource:@"ravynos-mark-64" ofType:@"png"];
     NSImage *logo = [[NSImage alloc] initWithContentsOfFile:ravyn];
-    logoView = [[NSImageView alloc] initWithFrame:NSMakeRect(menuBarHPad,menuBarVPad,16,16)];
-    [logoView setImage:logo];
-    [self addSubview:logoView];
+    [logo setScalesWhenResized:YES];
+    [logo setSize:NSMakeSize(16,16)];
+    NSMenu *logoMenu = [NSMenu new];
+    NSMenuItem *logoItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+    [logoItem setImage:logo];
+    [logoItem setSubmenu:sysMenu];
+    [logoMenu addItem:logoItem];
+
+    NSRect rect = NSMakeRect(menuBarHPad, 0, 64, menuBarHeight);
+    NSMainMenuView *mv = [[NSMainMenuView alloc] initWithFrame:rect menu:logoMenu];
+    [self addSubview:mv];
+
     [self setNeedsDisplay:YES];
     return self;
 }
@@ -66,6 +100,27 @@
     [appMenuView setWindow:[self window]];
 
     [self setNeedsDisplay:YES];
+}
+
+- (void)aboutThisComputer:(id)sender {
+    if(aboutWindow) {
+        [aboutWindow orderFront:nil];
+        return;
+    }
+
+    aboutWindow = [AboutWindow new];
+    [aboutWindow setDelegate:self];
+    [aboutWindow makeKeyAndOrderFront:nil];
+}
+
+/* NSWindow delegate */
+- (BOOL)windowShouldClose:(NSWindow *)window {
+    return YES;
+}
+
+- (void)windowWillClose:(NSNotification *)note {
+    if([[note object] isEqual:aboutWindow])
+        aboutWindow = nil;
 }
 
 @end

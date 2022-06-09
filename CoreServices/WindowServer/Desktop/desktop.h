@@ -39,23 +39,25 @@ extern const NSString *WLMenuDidUpdateNotification;
 @interface ClockView: NSTextView {
     NSDateFormatter *dateFormatter;
     NSString *dateFormat;
-    NSTimer *updateTimer;
     NSDictionary *attributes;
 }
 
 - (ClockView *)init;
-- (void)update:(NSTimer *)timer;
+- (void)update:(NSWindow *)window;
 @end
 
 // system and application menu titles view
 @interface MenuView: NSView {
-    NSImageView *logoView;
+    NSMainMenuView *logoMenuView;
+    NSMenu *sysMenu;
     NSMainMenuView *appMenuView;
+    NSWindow *aboutWindow;
 }
 
 - (MenuView *)init;
 - (void)setWindow:(NSWindow *)window;
 - (void)setMenu:(NSMenu *)menu;
+- (void)aboutThisComputer:(id)sender;
 @end
 
 // menu extras container
@@ -77,6 +79,7 @@ extern const NSString *WLMenuDidUpdateNotification;
 - (void)setPort:(mach_port_t)port forMenu:(NSMenu *)menu;
 - (void)removePortForMenu:(NSMenu *)menu;
 - (mach_port_t)portForMenu:(NSMenu *)menu;
+- (NSMenu *)menuForPID:(unsigned int)pid;
 - (void)setMenu:(NSMenu *)menu forPID:(unsigned int)pid;
 - (void)removeMenuForPID:(unsigned int)pid;
 - (BOOL)activateMenuForPID:(unsigned int)pid;
@@ -90,18 +93,19 @@ extern const NSString *WLMenuDidUpdateNotification;
 @interface DesktopWindow: NSWindow {
     NSImageView *view;
     MenuBarWindow *_menuBar;
+    BOOL _priDisplay; // primary display has the menu bar
 }
 
 - (DesktopWindow *)initWithFrame:(NSRect)frame forOutput:(NSNumber *)outputKey;
 - (id)platformWindow;
 - (void)updateBackground;
 - (MenuBarWindow *)menuBar;
+- (BOOL)isPrimaryDisplay;
 @end
 
 
 // desktop interface controller
 @interface AppDelegate: NSObject {
-    mach_port_t _bootstrapPort;
     mach_port_name_t _servicePort;
     NSMutableDictionary *desktops;
     MenuBarWindow *menuBar;

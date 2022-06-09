@@ -29,11 +29,14 @@ const NSString *PrefsWallpaperPathKey = @"WallpaperPath";
 - initWithFrame:(NSRect)frame forOutput:(NSNumber *)outputKey {
     NSArray *screens = [NSScreen screens];
     NSScreen *output = nil;
+    _priDisplay = NO;
 
     for(int i = 0; i < [screens count]; ++i) {
         NSScreen *s = [screens objectAtIndex:i];
         if([s key] == outputKey) {
             output = s;
+            if(i == 0)
+                _priDisplay = YES;
             break;
         }
     }
@@ -44,15 +47,18 @@ const NSString *PrefsWallpaperPathKey = @"WallpaperPath";
             |WLWindowLayerAnchorLeft|WLWindowLayerAnchorRight
         backing:NSBackingStoreBuffered defer:NO screen:output];
 
-    _menuBar = [MenuBarWindow new];
-    [_contentView addSubview:_menuBar];
-    [_menuBar setAutoresizingMask:0];
-    [_menuBar setWindow:self];
-    
-    NSRect rect = [_menuBar bounds];
-    frame.size.height -= rect.size.height;
 
-    [[self platformWindow] setExclusiveZone:rect.size.height];
+    if(_priDisplay) {
+        _menuBar = [MenuBarWindow new];
+        [_contentView addSubview:_menuBar];
+        [_menuBar setAutoresizingMask:0];
+        [_menuBar setWindow:self];
+    
+        NSRect rect = [_menuBar bounds];
+        frame.size.height -= rect.size.height;
+
+        [[self platformWindow] setExclusiveZone:rect.size.height];
+    }
 
     view = [[NSImageView alloc] initWithFrame:frame];
     [view setImageScaling:NSImageScaleAxesIndependently];
@@ -69,10 +75,18 @@ const NSString *PrefsWallpaperPathKey = @"WallpaperPath";
     return _menuBar;
 }
 
+- (BOOL)isPrimaryDisplay {
+    return _priDisplay;
+}
+
 - (void)updateBackground {
-    NSString *wallpaper = [[NSUserDefaults standardUserDefaults] stringForKey:PrefsWallpaperPathKey];
-    if(wallpaper == nil || [wallpaper length] == 0)
+    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
+    NSString *wallpaper = [prefs stringForKey:PrefsWallpaperPathKey];
+    if(wallpaper == nil || [wallpaper length] == 0) {
         wallpaper = @"/System/Library/Desktop Pictures/Mountain.jpg";
+        [prefs setObject:wallpaper forKey:PrefsWallpaperPathKey];
+        [prefs synchronize];
+    }
 
     NSImage *image = [[NSImage alloc] initWithContentsOfFile:wallpaper];
     [view setImage:image];

@@ -156,7 +156,7 @@ static struct task	unp_defer_task;
 #endif
 static u_long	unpst_sendspace = PIPSIZ;
 static u_long	unpst_recvspace = PIPSIZ;
-static u_long	unpdg_sendspace = 2*1024;	/* really max datagram size */
+static u_long	unpdg_maxdgram = 2*1024;
 static u_long	unpdg_recvspace = 16*1024;	/* support 8KB syslog msgs */
 static u_long	unpsp_sendspace = PIPSIZ;	/* really max datagram size */
 static u_long	unpsp_recvspace = PIPSIZ;
@@ -178,7 +178,7 @@ SYSCTL_ULONG(_net_local_stream, OID_AUTO, sendspace, CTLFLAG_RW,
 SYSCTL_ULONG(_net_local_stream, OID_AUTO, recvspace, CTLFLAG_RW,
 	   &unpst_recvspace, 0, "Default stream receive space.");
 SYSCTL_ULONG(_net_local_dgram, OID_AUTO, maxdgram, CTLFLAG_RW,
-	   &unpdg_sendspace, 0, "Default datagram send space.");
+	   &unpdg_maxdgram, 0, "Maximum datagram size.");
 SYSCTL_ULONG(_net_local_dgram, OID_AUTO, recvspace, CTLFLAG_RW,
 	   &unpdg_recvspace, 0, "Default datagram receive space.");
 SYSCTL_ULONG(_net_local_seqpacket, OID_AUTO, maxseqpacket, CTLFLAG_RW,
@@ -293,10 +293,9 @@ static int	unp_connect(struct socket *, struct sockaddr *,
 		    struct thread *);
 static int	unp_connectat(int, struct socket *, struct sockaddr *,
 		    struct thread *);
-static int	unp_connect2(struct socket *so, struct socket *so2, int);
+static void	unp_connect2(struct socket *so, struct socket *so2, int);
 static void	unp_disconnect(struct unpcb *unp, struct unpcb *unp2);
 static void	unp_dispose(struct socket *so);
-static void	unp_dispose_mbuf(struct mbuf *);
 static void	unp_shutdown(struct unpcb *);
 static void	unp_drop(struct unpcb *);
 static void	unp_gc(__unused void *, int);
@@ -529,7 +528,7 @@ uipc_attach(struct socket *so, int proto, struct thread *td)
 			break;
 
 		case SOCK_DGRAM:
-			sendspace = unpdg_sendspace;
+			sendspace = unpdg_maxdgram;
 			recvspace = unpdg_recvspace;
 			break;
 
@@ -764,16 +763,19 @@ static int
 uipc_connect2(struct socket *so1, struct socket *so2)
 {
 	struct unpcb *unp, *unp2;
-	int error;
+
+	if (so1->so_type != so2->so_type)
+		return (EPROTOTYPE);
 
 	unp = so1->so_pcb;
 	KASSERT(unp != NULL, ("uipc_connect2: unp == NULL"));
 	unp2 = so2->so_pcb;
 	KASSERT(unp2 != NULL, ("uipc_connect2: unp2 == NULL"));
 	unp_pcb_lock_pair(unp, unp2);
-	error = unp_connect2(so1, so2, PRU_CONNECT2);
+	unp_connect2(so1, so2, PRU_CONNECT2);
 	unp_pcb_unlock_pair(unp, unp2);
-	return (error);
+
+	return (0);
 }
 
 static void
@@ -1157,7 +1159,7 @@ uipc_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *nam,
 		UNP_PCB_UNLOCK(unp);
 	}
 	if (control != NULL && error != 0)
-		unp_dispose_mbuf(control);
+		unp_scan(control, unp_freerights);
 
 release:
 	if (control != NULL)
@@ -1630,7 +1632,10 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 	KASSERT(unp2 != NULL && so2 != NULL && unp2->unp_socket == so2 &&
 	    sotounpcb(so2) == unp2,
 	    ("%s: unp2 %p so2 %p", __func__, unp2, so2));
-	error = unp_connect2(so, so2, PRU_CONNECT);
+	unp_connect2(so, so2, PRU_CONNECT);
+	KASSERT((unp->unp_flags & UNP_CONNECTING) != 0,
+	    ("%s: unp %p has UNP_CONNECTING clear", __func__, unp));
+	unp->unp_flags &= ~UNP_CONNECTING;
 	unp_pcb_unlock_pair(unp, unp2);
 bad2:
 	mtx_unlock(vplock);
@@ -1639,11 +1644,13 @@ bad:
 		vput(vp);
 	}
 	free(sa, M_SONAME);
-	UNP_PCB_LOCK(unp);
-	KASSERT((unp->unp_flags & UNP_CONNECTING) != 0,
-	    ("%s: unp %p has UNP_CONNECTING clear", __func__, unp));
-	unp->unp_flags &= ~UNP_CONNECTING;
-	UNP_PCB_UNLOCK(unp);
+	if (__predict_false(error)) {
+		UNP_PCB_LOCK(unp);
+		KASSERT((unp->unp_flags & UNP_CONNECTING) != 0,
+		    ("%s: unp %p has UNP_CONNECTING clear", __func__, unp));
+		unp->unp_flags &= ~UNP_CONNECTING;
+		UNP_PCB_UNLOCK(unp);
+	}
 	return (error);
 }
 
@@ -1667,12 +1674,13 @@ unp_copy_peercred(struct thread *td, struct unpcb *client_unp,
 	client_unp->unp_flags |= (listen_unp->unp_flags & UNP_WANTCRED_MASK);
 }
 
-static int
+static void
 unp_connect2(struct socket *so, struct socket *so2, int req)
 {
 	struct unpcb *unp;
 	struct unpcb *unp2;
 
+	MPASS(so2->so_type == so->so_type);
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("unp_connect2: unp == NULL"));
 	unp2 = sotounpcb(so2);
@@ -1683,8 +1691,6 @@ unp_connect2(struct socket *so, struct socket *so2, int req)
 	KASSERT(unp->unp_conn == NULL,
 	    ("%s: socket %p is already connected", __func__, unp));
 
-	if (so2->so_type != so->so_type)
-		return (EPROTOTYPE);
 	unp->unp_conn = unp2;
 	unp_pcb_hold(unp2);
 	unp_pcb_hold(unp);
@@ -1712,7 +1718,6 @@ unp_connect2(struct socket *so, struct socket *so2, int req)
 	default:
 		panic("unp_connect2");
 	}
-	return (0);
 }
 
 static void
@@ -2010,10 +2015,8 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 	if (controlp != NULL) /* controlp == NULL => free control messages */
 		*controlp = NULL;
 	while (cm != NULL) {
-		if (sizeof(*cm) > clen || cm->cmsg_len > clen) {
-			error = EINVAL;
-			break;
-		}
+		MPASS(clen >= sizeof(*cm) && clen >= cm->cmsg_len);
+
 		data = CMSG_DATA(cm);
 		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
 		if (cm->cmsg_level == SOL_SOCKET
@@ -2038,13 +2041,7 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 			 */
 			newlen = newfds * sizeof(int);
 			*controlp = sbcreatecontrol(NULL, newlen,
-			    SCM_RIGHTS, SOL_SOCKET);
-			if (*controlp == NULL) {
-				FILEDESC_XUNLOCK(fdesc);
-				error = E2BIG;
-				unp_freerights(fdep, newfds);
-				goto next;
-			}
+			    SCM_RIGHTS, SOL_SOCKET, M_WAITOK);
 
 			fdp = (int *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2076,11 +2073,7 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 			if (error || controlp == NULL)
 				goto next;
 			*controlp = sbcreatecontrol(NULL, datalen,
-			    cm->cmsg_type, cm->cmsg_level);
-			if (*controlp == NULL) {
-				error = ENOBUFS;
-				goto next;
-			}
+			    cm->cmsg_type, cm->cmsg_level, M_WAITOK);
 			bcopy(data,
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *)),
 			    datalen);
@@ -2200,24 +2193,22 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 	fdesc = p->p_fd;
 	error = 0;
 	control = *controlp;
-	clen = control->m_len;
 	*controlp = NULL;
 	initial_controlp = controlp;
-	for (cm = mtod(control, struct cmsghdr *); cm != NULL;) {
-		if (sizeof(*cm) > clen || cm->cmsg_level != SOL_SOCKET
-		    || cm->cmsg_len > clen || cm->cmsg_len < sizeof(*cm)) {
-			error = EINVAL;
-			goto out;
-		}
-		data = CMSG_DATA(cm);
-		datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
+	for (clen = control->m_len, cm = mtod(control, struct cmsghdr *),
+	    data = CMSG_DATA(cm);
 
+	    clen >= sizeof(*cm) && cm->cmsg_level == SOL_SOCKET &&
+	    clen >= cm->cmsg_len && cm->cmsg_len >= sizeof(*cm) &&
+	    (char *)cm + cm->cmsg_len >= (char *)data;
+
+	    clen -= min(CMSG_SPACE(datalen), clen),
+	    cm = (struct cmsghdr *) ((char *)cm + CMSG_SPACE(datalen)),
+	    data = CMSG_DATA(cm)) {
+		datalen = (char *)cm + cm->cmsg_len - (char *)data;
 		switch (cm->cmsg_type) {
-		/*
-		 * Fill in credential information.
-		 */
 		case SCM_CREDS:
-			*controlp = sbcreatecontrol_how(NULL, sizeof(*cmcred),
+			*controlp = sbcreatecontrol(NULL, sizeof(*cmcred),
 			    SCM_CREDS, SOL_SOCKET, M_WAITOK);
 			cmcred = (struct cmsgcred *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2235,7 +2226,20 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 		case SCM_RIGHTS:
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
-				break;
+				continue;
+			/* On some machines sizeof pointer is bigger than
+			 * sizeof int, so we need to check if data fits into
+			 * single mbuf.  We could allocate several mbufs, and
+			 * unp_externalize() should even properly handle that.
+			 * But it is not worth to complicate the code for an
+			 * insane scenario of passing over 200 file descriptors
+			 * at once.
+			 */
+			newlen = oldfds * sizeof(fdep[0]);
+			if (CMSG_SPACE(newlen) > MCLBYTES) {
+				error = EMSGSIZE;
+				goto out;
+			}
 			/*
 			 * Check that all the FDs passed in refer to legal
 			 * files.  If not, reject the entire operation.
@@ -2260,8 +2264,7 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			 * Now replace the integer FDs with pointers to the
 			 * file structure and capability rights.
 			 */
-			newlen = oldfds * sizeof(fdep[0]);
-			*controlp = sbcreatecontrol_how(NULL, newlen,
+			*controlp = sbcreatecontrol(NULL, newlen,
 			    SCM_RIGHTS, SOL_SOCKET, M_WAITOK);
 			fdp = data;
 			for (i = 0; i < oldfds; i++, fdp++) {
@@ -2293,7 +2296,7 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			break;
 
 		case SCM_TIMESTAMP:
-			*controlp = sbcreatecontrol_how(NULL, sizeof(*tv),
+			*controlp = sbcreatecontrol(NULL, sizeof(*tv),
 			    SCM_TIMESTAMP, SOL_SOCKET, M_WAITOK);
 			tv = (struct timeval *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2301,7 +2304,7 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			break;
 
 		case SCM_BINTIME:
-			*controlp = sbcreatecontrol_how(NULL, sizeof(*bt),
+			*controlp = sbcreatecontrol(NULL, sizeof(*bt),
 			    SCM_BINTIME, SOL_SOCKET, M_WAITOK);
 			bt = (struct bintime *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2309,7 +2312,7 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			break;
 
 		case SCM_REALTIME:
-			*controlp = sbcreatecontrol_how(NULL, sizeof(*ts),
+			*controlp = sbcreatecontrol(NULL, sizeof(*ts),
 			    SCM_REALTIME, SOL_SOCKET, M_WAITOK);
 			ts = (struct timespec *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2317,7 +2320,7 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			break;
 
 		case SCM_MONOTONIC:
-			*controlp = sbcreatecontrol_how(NULL, sizeof(*ts),
+			*controlp = sbcreatecontrol(NULL, sizeof(*ts),
 			    SCM_MONOTONIC, SOL_SOCKET, M_WAITOK);
 			ts = (struct timespec *)
 			    CMSG_DATA(mtod(*controlp, struct cmsghdr *));
@@ -2329,17 +2332,10 @@ unp_internalize(struct mbuf **controlp, struct thread *td)
 			goto out;
 		}
 
-		if (*controlp != NULL)
-			controlp = &(*controlp)->m_next;
-		if (CMSG_SPACE(datalen) < clen) {
-			clen -= CMSG_SPACE(datalen);
-			cm = (struct cmsghdr *)
-			    ((caddr_t)cm + CMSG_SPACE(datalen));
-		} else {
-			clen = 0;
-			cm = NULL;
-		}
+		controlp = &(*controlp)->m_next;
 	}
+	if (clen > 0)
+		error = EINVAL;
 
 out:
 	if (error != 0 && initial_controlp != NULL)
@@ -2365,7 +2361,7 @@ unp_addsockcred(struct thread *td, struct mbuf *control, int mode)
 		cmsgtype = SCM_CREDS;
 	}
 
-	m = sbcreatecontrol(NULL, ctrlsz, cmsgtype, SOL_SOCKET);
+	m = sbcreatecontrol(NULL, ctrlsz, cmsgtype, SOL_SOCKET, M_NOWAIT);
 	if (m == NULL)
 		return (control);
 
@@ -2738,14 +2734,6 @@ unp_gc(__unused void *arg, int pending)
 	free(unref, M_TEMP);
 }
 
-static void
-unp_dispose_mbuf(struct mbuf *m)
-{
-
-	if (m)
-		unp_scan(m, unp_freerights);
-}
-
 /*
  * Synchronize against unp_gc, which can trip over data as we are freeing it.
  */
@@ -2771,12 +2759,15 @@ unp_dispose(struct socket *so)
 	KASSERT(sb->sb_ccc == 0 && sb->sb_mb == 0 && sb->sb_mbcnt == 0,
 	    ("%s: ccc %u mb %p mbcnt %u", __func__,
 	    sb->sb_ccc, (void *)sb->sb_mb, sb->sb_mbcnt));
-	sbrelease_locked(sb, so);
+	sbrelease_locked(so, SO_RCV);
 	SOCK_RECVBUF_UNLOCK(so);
 	if (SOCK_IO_RECV_OWNED(so))
 		SOCK_IO_RECV_UNLOCK(so);
 
-	unp_dispose_mbuf(m);
+	if (m != NULL) {
+		unp_scan(m, unp_freerights);
+		m_freem(m);
+	}
 }
 
 static void

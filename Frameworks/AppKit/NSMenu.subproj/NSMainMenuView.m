@@ -179,12 +179,23 @@ static void drawSunkenBorder(NSRect rect){
 		NSMenuItem *item=[items objectAtIndex:i];
 		NSString   *title=[item title];
 		NSRect      titleRect=[self titleRectForItem:item previousBorderRect:previousBorderRect];
+                NSImage *img = [item image];
+                if(img) {
+                    titleRect.size.width += ([img size].width); // whee, magic numbers
+                    titleRect.size.height = MIN(22, titleRect.size.height);
+                }
 		NSRect      borderRect=[self borderRectFromTitleRect:titleRect];
 		
 		[[self graphicsStyle] drawMenuBarItemBorderInRect:borderRect hover:(i==_selectedItemIndex)/*NSPointInRect(mouseLoc,borderRect)*/ selected:(i==_selectedItemIndex)];
 		
 		titleRect.origin.x = borderRect.origin.x + (NSWidth(borderRect) - NSWidth(titleRect)) / 2;
 		titleRect.origin.y = borderRect.origin.y + (NSHeight(borderRect) - NSHeight(titleRect)) / 2;
+
+                if(img) {
+                    NSPoint pt = titleRect.origin;
+                    pt.y += ([img size].height);
+                    [[item image] compositeToPoint:pt operation:NSCompositeSourceOver];
+                }
 
                 if([item hasSubmenu] && [[[item submenu] _name] isEqualToString:@"NSAppleMenu"]) 
                     [[self graphicsStyle] drawAttributedMenuItemText:[item attributedTitle]
@@ -316,6 +327,12 @@ static void drawSunkenBorder(NSRect rect){
     topLeft.x=NSMaxX(screenVisible)-branchFrame.size.width;
    if(topLeft.x<NSMinX(screenVisible))
     topLeft.x=NSMinX(screenVisible);
+
+    // Wayland hack: our WLWindowPopUp is a subsurface that is attached
+    // to the parent surface, so its x,y are relative to that, not the
+    // screen frame. FIXME: find a better way to do this.
+    topLeft.x -= screenVisible.origin.x;
+    topLeft.y -= screenVisible.origin.y;
 
   [branch setFrameTopLeftPoint:topLeft];
 }

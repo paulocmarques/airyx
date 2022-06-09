@@ -111,15 +111,15 @@ static inline T* new_zeroed()
 }
 
 #ifdef _LIBCPP_BEGIN_NAMESPACE_STD
-_LIBCPP_BEGIN_NAMESPACE_STD
+//_LIBCPP_BEGIN_NAMESPACE_STD
 /**
  * If we're compiling with libc++, we need to instantiate the vector base class
  * to avoid linker errors.  Libc++ defines the functions that throw exceptions
  * in the headers but makes them extern templates to avoid code duplication in
  * the slow paths.
  */
-template class __attribute__((visibility("hidden")))  __vector_base_common<true>;
-_LIBCPP_END_NAMESPACE_STD
+//template class __attribute__((visibility("hidden")))  __vector_base_common<true>;
+//_LIBCPP_END_NAMESPACE_STD
 #endif
 
 
@@ -188,7 +188,6 @@ static void emptyPool(struct arc_tls *tls, void *stop)
 		       (tls->pool->insert > tls->pool->pool))
 		{
 			tls->pool->insert--;
-			fprintf(stderr,"2nd release %p (0x%lx)\n",tls->pool->insert,*tls->pool->insert);
 			release(*tls->pool->insert);
 		}
 	}

@@ -234,7 +234,7 @@ elf_coredump(int efd, int fd, pid_t pid)
 	/* Put notes. */
 	elf_putnotes(pid, sb, &notesz);
 	/* Align up to a page boundary for the program segments. */
-	sbuf_end_section(sb, -1, PAGE_SIZE, 0);
+	sbuf_end_section(sb, -1, getpagesize(), 0);
 	if (sbuf_finish(sb) != 0)
 		err(1, "sbuf_finish");
 	hdr = sbuf_data(sb);
@@ -295,15 +295,17 @@ cb_put_phdr(struct map_entry *entry, void *closure)
 {
 	struct phdr_closure *phc = (struct phdr_closure *)closure;
 	Elf_Phdr *phdr = phc->phdr;
+	size_t page_size;
 
-	phc->offset = round_page(phc->offset);
+	page_size = getpagesize();
+	phc->offset = roundup2(phc->offset, page_size);
 
 	phdr->p_type = PT_LOAD;
 	phdr->p_offset = phc->offset;
 	phdr->p_vaddr = entry->start;
 	phdr->p_paddr = 0;
 	phdr->p_filesz = phdr->p_memsz = entry->end - entry->start;
-	phdr->p_align = PAGE_SIZE;
+	phdr->p_align = page_size;
 	phdr->p_flags = 0;
 	if (entry->protection & VM_PROT_READ)
 		phdr->p_flags |= PF_R;
@@ -622,7 +624,9 @@ readmap(pid_t pid)
 			errx(1, "out of memory");
 		ent->start = (vm_offset_t)kve->kve_start;
 		ent->end = (vm_offset_t)kve->kve_end;
-		ent->protection = VM_PROT_READ | VM_PROT_WRITE;
+		ent->protection = VM_PROT_READ;
+		if ((kve->kve_protection & KVME_PROT_WRITE) != 0)
+			ent->protection |= VM_PROT_WRITE;
 		if ((kve->kve_protection & KVME_PROT_EXEC) != 0)
 			ent->protection |= VM_PROT_EXECUTE;
 
@@ -724,31 +728,6 @@ elf_note_ptlwpinfo(void *arg, size_t *sizep)
 	*sizep = sizeof(int) + sizeof(struct ptrace_lwpinfo);
 	return (p);
 }
-
-#if defined(__arm__)
-static void *
-elf_note_arm_vfp(void *arg, size_t *sizep)
-{
-	lwpid_t tid;
-	struct vfpreg *vfp;
-	static bool has_vfp = true;
-	struct vfpreg info;
-
-	tid = *(lwpid_t *)arg;
-	if (has_vfp) {
-		if (ptrace(PT_GETVFPREGS, tid, (void *)&info, 0) != 0)
-			has_vfp = false;
-	}
-	if (!has_vfp) {
-		*sizep = 0;
-		return (NULL);
-	}
-	vfp = calloc(1, sizeof(*vfp));
-	memcpy(vfp, &info, sizeof(*vfp));
-	*sizep = sizeof(*vfp);
-	return (vfp);
-}
-#endif
 
 #if defined(__i386__) || defined(__amd64__)
 static void *

@@ -28,10 +28,12 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <sys/un.h>
 
 #include <errno.h>
@@ -370,6 +372,70 @@ ATF_TC_BODY(send_and_shutdown, tc)
 }
 
 /*
+ * Send maximum possible SCM_RIGHTS message.
+ * Internally the file descriptors are converted from integers to pointers
+ * and stored in a single mbuf cluster.  Check that we can not send too much
+ * and that we can successfully send maximum possible amount.  Check that we
+ * can not exploit getrlimit(3).
+ */
+#define	MAXFDS	((MCLBYTES - _ALIGN(sizeof(struct cmsghdr)))/sizeof(void *))
+ATF_TC_WITHOUT_HEAD(send_a_lot);
+ATF_TC_BODY(send_a_lot, tc)
+{
+	struct msghdr msghdr;
+	struct iovec iov;
+	struct rlimit rlim;
+	int fd[2], nfds;
+	char *cmsg, ch;
+
+	domainsocketpair(fd);
+	cmsg = malloc(CMSG_SPACE((MAXFDS + 1) * sizeof(int)));
+	ATF_REQUIRE(cmsg != NULL);
+	iov.iov_base = &ch;
+	iov.iov_len = sizeof(ch);
+	msghdr = (struct msghdr ){
+		.msg_control = cmsg,
+		.msg_controllen = CMSG_LEN((MAXFDS + 1) * sizeof(int)),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+	};
+
+	/* Sending too much fails. */
+	putfds(cmsg, fd[0], MAXFDS + 1);
+	ATF_REQUIRE(sendmsg(fd[0], &msghdr, 0) == -1);
+	ATF_REQUIRE(errno == EMSGSIZE);
+
+	/* Sending just the right amount works and everything is received. */
+	putfds(cmsg, fd[0], MAXFDS);
+	msghdr.msg_controllen = CMSG_LEN(MAXFDS * sizeof(int));
+	ATF_REQUIRE(sendmsg(fd[0], &msghdr, 0) == 1);
+	nfds = getnfds();
+	ATF_REQUIRE(recvmsg(fd[1], &msghdr, 0) == 1);
+	ATF_REQUIRE(getnfds() == (int)(nfds + MAXFDS));
+
+	/* Limit our process open files... */
+	ATF_REQUIRE(getrlimit(RLIMIT_NOFILE, &rlim) == 0);
+	nfds = rlim.rlim_cur = getnfds();
+	ATF_REQUIRE(setrlimit(RLIMIT_NOFILE, &rlim) == 0);
+
+	/* ... and try to receive a single descriptor. */
+	putfds(cmsg, fd[0], 1);
+	msghdr.msg_controllen = CMSG_LEN(sizeof(int));
+	ATF_REQUIRE(sendmsg(fd[0], &msghdr, 0) == 1);
+	ATF_REQUIRE(recvmsg(fd[1], &msghdr, 0) == -1);
+	/* Such attempt shall fail with EMSGSIZE. */
+	ATF_REQUIRE(errno == EMSGSIZE);
+	ATF_REQUIRE(getnfds() == nfds);
+	/*
+	 * For the SOCK_STREAM the above attempt shall free the control in
+	 * the kernel, so that socket isn't left in a stuck state.  Next read
+	 * shall bring us the normal data only.
+	 */
+	ATF_REQUIRE(recvmsg(fd[1], &msghdr, 0) == 1);
+	ATF_REQUIRE(msghdr.msg_controllen == 0);
+}
+
+/*
  * Send two files.  Then receive them.  Make sure they are returned in the
  * right order, and both get there.
  */
@@ -678,14 +744,14 @@ ATF_TC_BODY(copyout_rights_error, tc)
 }
 
 /*
- * Verify that we can handle empty rights messages.  Try sending two SCM_RIGHTS
- * messages with a single call, one empty and one containing a single FD.
+ * Verify that we can handle empty rights messages.
  */
 ATF_TC_WITHOUT_HEAD(empty_rights_message);
 ATF_TC_BODY(empty_rights_message, tc)
 {
 	struct iovec iov;
 	struct msghdr msghdr;
+	struct cmsghdr cmsg;
 	char *cm, message[CMSG_SPACE(0) + CMSG_SPACE(sizeof(int))];
 	ssize_t len;
 	int error, fd[2], putfd;
@@ -693,21 +759,40 @@ ATF_TC_BODY(empty_rights_message, tc)
 	domainsocketpair(fd);
 	devnull(&putfd);
 
+	memset(&msghdr, 0, sizeof(msghdr));
+	iov.iov_base = NULL;
+	iov.iov_len = 0;
+	msghdr.msg_iov = &iov;
+	msghdr.msg_iovlen = 1;
+
 	/*
-	 * First, try sending an empty message followed by a non-empty message.
+	 * Try sending incorrect empty message.  On 64-bit platforms, where
+	 * CMSG_SPACE(0) > sizeof(struct cmsghdr), this will exercise
+	 * an edge case.
+	 */
+	cmsg = (struct cmsghdr ){
+	    .cmsg_len = sizeof(struct cmsghdr),	/* not CMSG_LEN(0)! */
+	    .cmsg_level = SOL_SOCKET,
+	    .cmsg_type = SCM_RIGHTS,
+	};
+	msghdr.msg_control = &cmsg;
+	msghdr.msg_controllen = CMSG_SPACE(0);
+
+	len = sendmsg(fd[0], &msghdr, 0);
+	if (CMSG_LEN(0) != sizeof(struct cmsghdr))
+		ATF_REQUIRE(len == -1 && errno == EINVAL);
+	else
+		ATF_REQUIRE(len == 0);
+
+	/*
+	 * Try sending an empty message followed by a non-empty message.
 	 */
 	cm = message;
 	putfds(cm, -1, 0);
 	cm += CMSG_SPACE(0);
 	putfds(cm, putfd, 1);
-
-	memset(&msghdr, 0, sizeof(msghdr));
-	iov.iov_base = NULL;
-	iov.iov_len = 0;
 	msghdr.msg_control = message;
 	msghdr.msg_controllen = sizeof(message);
-	msghdr.msg_iov = &iov;
-	msghdr.msg_iovlen = 1;
 
 	len = sendmsg(fd[0], &msghdr, 0);
 	ATF_REQUIRE_MSG(len == 0, "sendmsg failed: %s", strerror(errno));
@@ -756,6 +841,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, send_and_close);
 	ATF_TP_ADD_TC(tp, send_and_cancel);
 	ATF_TP_ADD_TC(tp, send_and_shutdown);
+	ATF_TP_ADD_TC(tp, send_a_lot);
 	ATF_TP_ADD_TC(tp, two_files);
 	ATF_TP_ADD_TC(tp, bundle);
 	ATF_TP_ADD_TC(tp, bundle_cancel);

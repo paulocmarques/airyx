@@ -328,13 +328,16 @@ again:
 				 */
 				p = NULL;
 				goto after_sack_rexmit;
-			} else
+			} else {
 				/* Can rexmit part of the current hole */
 				len = ((int32_t)ulmin(cwin,
-						   tp->snd_recover - p->rxmit));
-		} else
-			len = ((int32_t)ulmin(cwin, p->end - p->rxmit));
-		off = p->rxmit - tp->snd_una;
+				    SEQ_SUB(tp->snd_recover, p->rxmit)));
+			}
+		} else {
+			len = ((int32_t)ulmin(cwin,
+			    SEQ_SUB(p->end, p->rxmit)));
+		}
+		off = SEQ_SUB(p->rxmit, tp->snd_una);
 		KASSERT(off >= 0,("%s: sack block to the left of una : %d",
 		    __func__, off));
 		if (len > 0) {
@@ -2166,9 +2169,9 @@ tcp_sndbuf_autoscale(struct tcpcb *tp, struct socket *so, uint32_t sendwin)
 		    sbused(&so->so_snd) < V_tcp_autosndbuf_max &&
 		    sendwin >= (sbused(&so->so_snd) -
 		    (tp->snd_nxt - tp->snd_una))) {
-			if (!sbreserve_locked(&so->so_snd,
+			if (!sbreserve_locked(so, SO_SND,
 			    min(so->so_snd.sb_hiwat + V_tcp_autosndbuf_inc,
-			     V_tcp_autosndbuf_max), so, curthread))
+			     V_tcp_autosndbuf_max), curthread))
 				so->so_snd.sb_flags &= ~SB_AUTOSIZE;
 		}
 	}

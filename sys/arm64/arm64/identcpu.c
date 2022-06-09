@@ -49,6 +49,7 @@ __FBSDID("$FreeBSD$");
 
 static void print_cpu_midr(struct sbuf *sb, u_int cpu);
 static void print_cpu_features(u_int cpu);
+static void print_cpu_caches(struct sbuf *sb, u_int);
 #ifdef COMPAT_FREEBSD32
 static u_long parse_cpu_features_hwcap32(void);
 #endif
@@ -103,6 +104,8 @@ static char cpu_model[64];
 SYSCTL_STRING(_hw, HW_MODEL, model, CTLFLAG_RD,
 	cpu_model, sizeof(cpu_model), "Machine model");
 
+#define	MAX_CACHES	8	/* Maximum number of caches supported
+				   architecturally. */
 /*
  * Per-CPU affinity as provided in MPIDR_EL1
  * Indexed by CPU number in logical order selected by the system.
@@ -135,6 +138,8 @@ struct cpu_desc {
 	uint64_t	mvfr0;
 	uint64_t	mvfr1;
 #endif
+	uint64_t	clidr;
+	uint32_t	ccsidr[MAX_CACHES][2]; /* 2 possible types. */
 };
 
 static struct cpu_desc cpu_desc[MAXCPU];
@@ -183,6 +188,7 @@ struct cpu_implementers {
 static const struct cpu_parts cpu_parts_arm[] = {
 	{ CPU_PART_AEM_V8, "AEMv8" },
 	{ CPU_PART_FOUNDATION, "Foundation-Model" },
+	{ CPU_PART_CORTEX_A34, "Cortex-A34" },
 	{ CPU_PART_CORTEX_A35, "Cortex-A35" },
 	{ CPU_PART_CORTEX_A53, "Cortex-A53" },
 	{ CPU_PART_CORTEX_A55, "Cortex-A55" },
@@ -194,7 +200,17 @@ static const struct cpu_parts cpu_parts_arm[] = {
 	{ CPU_PART_CORTEX_A76, "Cortex-A76" },
 	{ CPU_PART_CORTEX_A76AE, "Cortex-A76AE" },
 	{ CPU_PART_CORTEX_A77, "Cortex-A77" },
+	{ CPU_PART_CORTEX_A78, "Cortex-A78" },
+	{ CPU_PART_CORTEX_A78C, "Cortex-A78C" },
+	{ CPU_PART_CORTEX_A510, "Cortex-A510" },
+	{ CPU_PART_CORTEX_A710, "Cortex-A710" },
+	{ CPU_PART_CORTEX_X1, "Cortex-X1" },
+	{ CPU_PART_CORTEX_X1C, "Cortex-X1C" },
+	{ CPU_PART_CORTEX_X2, "Cortex-X2" },
+	{ CPU_PART_NEOVERSE_E1, "Neoverse-E1" },
 	{ CPU_PART_NEOVERSE_N1, "Neoverse-N1" },
+	{ CPU_PART_NEOVERSE_N2, "Neoverse-N2" },
+	{ CPU_PART_NEOVERSE_V1, "Neoverse-V1" },
 	CPU_PART_NONE,
 };
 
@@ -1116,6 +1132,9 @@ static struct mrs_field_value id_aa64pfr0_ras[] = {
 
 static struct mrs_field_value id_aa64pfr0_gic[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64PFR0, GIC, CPUIF_NONE, CPUIF_EN),
+	MRS_FIELD_VALUE(ID_AA64PFR0_GIC_CPUIF_NONE, ""),
+	MRS_FIELD_VALUE(ID_AA64PFR0_GIC_CPUIF_EN, "GIC"),
+	MRS_FIELD_VALUE(ID_AA64PFR0_GIC_CPUIF_4_1, "GIC 4.1"),
 	MRS_FIELD_VALUE_END,
 };
 
@@ -1791,6 +1810,7 @@ cpu_features_sysinit(void *dummy __unused)
 	/* Fill in cpu_model for the hw.model sysctl */
 	sbuf_new(&sb, cpu_model, sizeof(cpu_model), SBUF_FIXEDLEN);
 	print_cpu_midr(&sb, 0);
+
 	sbuf_finish(&sb);
 	sbuf_delete(&sb);
 }
@@ -1965,6 +1985,62 @@ print_cpu_midr(struct sbuf *sb, u_int cpu)
 }
 
 static void
+print_cpu_cache(u_int cpu, struct sbuf *sb, uint64_t ccs, bool icache,
+    bool unified)
+{
+	size_t cache_size;
+	size_t line_size;
+
+	/* LineSize is Log2(S) - 4. */
+	line_size = 1 << ((ccs & CCSIDR_LineSize_MASK) + 4);
+	/*
+	 * Calculate cache size (sets * ways * line size).  There are different
+	 * formats depending on the FEAT_CCIDX bit in ID_AA64MMFR2 feature
+	 * register.
+	 */
+	if ((cpu_desc[cpu].id_aa64mmfr2 & ID_AA64MMFR2_CCIDX_64))
+		cache_size = (CCSIDR_NSETS_64(ccs) + 1) *
+		    (CCSIDR_ASSOC_64(ccs) + 1);
+	else
+		cache_size = (CCSIDR_NSETS(ccs) + 1) * (CCSIDR_ASSOC(ccs) + 1);
+
+	cache_size *= line_size;
+	sbuf_printf(sb, "%zuKB (%s)", cache_size / 1024,
+	    icache ? "instruction" : unified ? "unified" : "data");
+}
+
+static void
+print_cpu_caches(struct sbuf *sb, u_int cpu)
+{
+	/* Print out each cache combination */
+	uint64_t clidr;
+	int i = 1;
+	clidr = cpu_desc[cpu].clidr;
+
+	for (i = 0; (clidr & CLIDR_CTYPE_MASK) != 0; i++, clidr >>= 3) {
+		int j = 0;
+		int ctype_m = (clidr & CLIDR_CTYPE_MASK);
+
+		sbuf_printf(sb, " L%d cache: ", i + 1);
+		if ((clidr & CLIDR_CTYPE_IO)) {
+			print_cpu_cache(cpu, sb, cpu_desc[cpu].ccsidr[i][j++],
+			    true, false);
+			/* If there's more, add to the line. */
+			if ((ctype_m & ~CLIDR_CTYPE_IO) != 0)
+				sbuf_printf(sb, ", ");
+		}
+		if ((ctype_m & ~CLIDR_CTYPE_IO) != 0) {
+			print_cpu_cache(cpu, sb, cpu_desc[cpu].ccsidr[i][j],
+			    false, (clidr & CLIDR_CTYPE_UNIFIED));
+		}
+		sbuf_printf(sb, "\n");
+
+	}
+	sbuf_finish(sb);
+	printf("%s", sbuf_data(sb));
+}
+
+static void
 print_cpu_features(u_int cpu)
 {
 	struct sbuf *sb;
@@ -2093,6 +2169,8 @@ print_cpu_features(u_int cpu)
 		print_id_register(sb, "AArch32 Media and VFP Features 1",
 		     cpu_desc[cpu].mvfr1, mvfr1_fields);
 #endif
+	if (bootverbose)
+		print_cpu_caches(sb, cpu);
 
 	sbuf_delete(sb);
 	sb = NULL;
@@ -2142,6 +2220,8 @@ identify_cache(uint64_t ctr)
 void
 identify_cpu(u_int cpu)
 {
+	uint64_t clidr;
+
 	/* Save affinity for current CPU */
 	cpu_desc[cpu].mpidr = get_mpidr();
 	CPU_AFFINITY(cpu) = cpu_desc[cpu].mpidr & CPU_AFF_MASK;
@@ -2156,6 +2236,25 @@ identify_cpu(u_int cpu)
 	cpu_desc[cpu].id_aa64mmfr2 = READ_SPECIALREG(id_aa64mmfr2_el1);
 	cpu_desc[cpu].id_aa64pfr0 = READ_SPECIALREG(id_aa64pfr0_el1);
 	cpu_desc[cpu].id_aa64pfr1 = READ_SPECIALREG(id_aa64pfr1_el1);
+
+	cpu_desc[cpu].clidr = READ_SPECIALREG(clidr_el1);
+
+	clidr = cpu_desc[cpu].clidr;
+
+	for (int i = 0; (clidr & CLIDR_CTYPE_MASK) != 0; i++, clidr >>= 3) {
+		int j = 0;
+		if ((clidr & CLIDR_CTYPE_IO)) {
+			WRITE_SPECIALREG(csselr_el1,
+			    CSSELR_Level(i) | CSSELR_InD);
+			cpu_desc[cpu].ccsidr[i][j++] =
+			    READ_SPECIALREG(ccsidr_el1);
+		}
+		if ((clidr & ~CLIDR_CTYPE_IO) == 0)
+			continue;
+		WRITE_SPECIALREG(csselr_el1, CSSELR_Level(i));
+		cpu_desc[cpu].ccsidr[i][j] = READ_SPECIALREG(ccsidr_el1);
+	}
+
 #ifdef COMPAT_FREEBSD32
 	/* Only read aarch32 SRs if EL0-32 is available */
 	if (ID_AA64PFR0_EL0_VAL(cpu_desc[cpu].id_aa64pfr0) ==
