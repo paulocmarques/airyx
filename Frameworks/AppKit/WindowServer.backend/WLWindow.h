@@ -46,6 +46,7 @@
     struct wl_seat *wl_seat;
     struct xdg_toplevel *xdg_toplevel;
     struct xdg_surface *xdg_surface; 
+    struct wl_callback *cb;
 
     // subsurface support
     struct wl_subcompositor *subcompositor;
@@ -87,6 +88,8 @@
 - (NSPoint)transformPoint:(NSPoint)pos;
 - (O2Rect)transformFrame:(O2Rect)frame;
 - (BOOL)setProperty:(NSString *)property toValue:(NSString *)value;
+- (void)setExclusiveZone:(uint32_t)pixels;
+- (void)setKeyboardInteractivity:(uint32_t)keyboardStyle;
 - (O2Context *) createCGContextIfNeeded;
 - (void) frameChanged;
 - (struct wl_surface *)wl_surface;

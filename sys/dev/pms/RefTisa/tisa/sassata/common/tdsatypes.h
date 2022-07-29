@@ -220,7 +220,7 @@ typedef struct tdsaContext_s {
   agsaHwConfig_t        HwConfig;
 
 
-  /**< Copy of TI low level resoure */
+  /**< Copy of TI low level resource */
   tiLoLevelResource_t   loResource;
 
   /* information of ESGL pages allocated
@@ -343,7 +343,7 @@ typedef struct tdsaContext_s {
   bit8   FatalErrorData[(5 * (1024 * 1024))];
 #endif /* TI_GETFOR_ONRESET */
   bit32	 sgpioResponseSet;    /*Used to sync between SGPIO Req and Resp */
-  volatile  NvmdResponseSet;
+  volatile int NvmdResponseSet;
 }  tdsaContext_t;
 
 #ifdef FAST_IO_TEST

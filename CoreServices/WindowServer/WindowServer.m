@@ -30,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <pthread.h>
 #include <pwd.h>
 #include <grp.h>
@@ -116,7 +117,12 @@ static void freeEnviron(char **envp) {
 
 void launchShell(void *arg) {
     enum ShellType shell = *(enum ShellType *)arg;
-    int spawned = 0, status;
+    int status;
+    NSString *lwPath = nil;
+    BOOL stopOnErr = NO;
+    NSString *s_stopOnErr = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"DebugExitOnError"];
+    if(s_stopOnErr && [s_stopOnErr isEqualToString:@"YES"])
+        stopOnErr = YES;
 
     while(shell != NONE) {
         if(ready == NO) {
@@ -143,10 +149,57 @@ void launchShell(void *arg) {
                     exit(-1);
                 }
 
-                NSLog(@"FIXME: Doing the login window.");
-                int uid = 1001;
-                int gid = 1001;
+                int uid = nobodyUID;
+                int gid = videoGID;
+
+                int fds[2];
+                if(pipe(fds) != 0) {
+                    perror("pipe");
+                    exit(-1);
+                }
+                char fdbuf[8];
+                sprintf(fdbuf, "%d", fds[1]);
+                int status = -1;
+
+                lwPath = [[NSBundle mainBundle] pathForResource:@"LoginWindow" ofType:@"app"];
+                if(!lwPath) {
+                    NSLog(@"missing LoginWindow.app!");
+                    break;
+                }
+                lwPath = [[NSBundle bundleWithPath:lwPath] executablePath];
+                if(!lwPath) {
+                    NSLog(@"missing LoginWindow.app!");
+                    break;
+                }
+                
+                char **envp = setUpEnviron(nobodyUID);
+
+                pid_t pid = fork();
+                if(!pid) { // child
+                    close(fds[0]);
+                    seteuid(0);
+                    execle([lwPath UTF8String], [[lwPath lastPathComponent] UTF8String], fdbuf, NULL, envp);
+                    exit(-1);
+                } else {
+                    close(fds[1]);
+                    read(fds[0], &uid, sizeof(int));
+                    waitpid(pid, &status, 0);
+                }
+                freeEnviron(envp);
+                close(fds[0]);
+                NSLog(@"received uid %d", uid);
+
+                if(uid < 500) {
+                    NSLog(@"UID below minimum");
+                    break;
+                }
+                    
                 struct passwd *pw = getpwuid(uid);
+                if(!pw || pw->pw_uid != uid) {
+                    NSLog(@"no such uid %d", uid);
+                    break;
+                }
+                gid = pw->pw_gid;
 
                 // give socket to the logged in user
                 char *userXdgDir = 0;
@@ -162,28 +215,21 @@ void launchShell(void *arg) {
                 giveXdgDir(uid, gid, userXdgDir);
                 free(userXdgDir);
 
+                // ensure our helper is owned correctly
+                {
+                    NSString *path = [[NSBundle mainBundle] pathForResource:@"SystemUIServer" ofType:@"app"];
+                    if(path)
+                        path = [[NSBundle bundleWithPath:path] pathForResource:@"shutdown" ofType:@""];
+                    if(path) {
+                        chown([path UTF8String], 0, videoGID);
+                        chmod([path UTF8String], 04550);
+                    }
+                }
+
                 shell = DESKTOP;
                 break;
             case DESKTOP: {
                 char **envp = setUpEnviron(uid);
-
-                if(!spawned && fork() == 0) {
-                    setlogin(pw->pw_name);
-                    chdir(pw->pw_dir);
-
-                    login_cap_t *lc = login_getpwclass(pw);
-                    if (setusercontext(lc, pw, pw->pw_uid,
-                        LOGIN_SETALL & ~(LOGIN_SETLOGIN)) != 0) {
-                            perror("setusercontext");
-                            exit(-1);
-                    }
-                    login_close(lc);
-                    ++spawned;
-                    execle("/usr/bin/foot", "foot", "-dnone", "-L", NULL, envp);
-                    perror("execl");
-                    spawned = 0;
-                    exit(-1);
-                }
                 pid_t pid = fork();
                 if(pid == 0) {
                     setlogin(pw->pw_name);
@@ -197,8 +243,13 @@ void launchShell(void *arg) {
                     }
                     login_close(lc);
 
-                    execle("/System/Library/CoreServices/WindowServer.app/Resources/SystemUIServer.app/SystemUIServer",
-                        "SystemUIServer", NULL, envp);
+                    NSString *path = [[NSBundle mainBundle] pathForResource:@"SystemUIServer" ofType:@"app"];
+                    if(path)
+                        path = [[NSBundle bundleWithPath:path] executablePath];
+                    
+                    if(path)
+                        execle([path UTF8String], [[path lastPathComponent] UTF8String], NULL, envp);
+
                     perror("execl");
                     exit(-1);
                 } else if(pid < 0) {
@@ -210,7 +261,9 @@ void launchShell(void *arg) {
                 freeEnviron(envp);
                 waitpid(pid, &status, 0);
                 shell = LOGINWINDOW;
-                execl("/bin/launchctl", "launchctl", "remove", "com.ravynos.WindowServer", NULL);
+                // safety valve for debugging
+                if(stopOnErr)
+                    execl("/bin/launchctl", "launchctl", "remove", "com.ravynos.WindowServer", NULL);
                 break;
             }
         }
@@ -250,6 +303,7 @@ int main(int argc, const char *argv[]) {
     }
     giveXdgDir(nobodyUID, videoGID, xdgDir);
 
+    NSAutoreleasePool *pool = [NSAutoreleasePool new];
     NSString *confPath = [[NSBundle mainBundle] pathForResource:@"ws" ofType:@"conf"];
     config_file = [confPath UTF8String];
 
@@ -266,6 +320,7 @@ int main(int argc, const char *argv[]) {
                 break;
         }
     }
+    [pool drain];
 
     while(access("/var/run/windowserver", F_OK) != 0)
         sleep(1);

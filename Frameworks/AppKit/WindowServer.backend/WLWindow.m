@@ -103,10 +103,10 @@ static void layer_surface_configure(void *data,
         [win createCGContextIfNeeded];
         [win createCGLContextObjIfNeeded];
         [win setFrame:_frame];
-        [win setReady:YES];
 
         [win frameChanged];
         [[win delegate] platformWindow:win frameChanged:frame didSize:YES];
+        [win setReady:YES];
     }
 }
 
@@ -192,10 +192,8 @@ static const struct wl_callback_listener frame_listener = {
 };
 
 static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
-    if(cb != NULL)
-        wl_callback_destroy(cb);
-
     WLWindow *win = (__bridge WLWindow *)data;
+    [win clearRenderCallback];
     [win openGLFlushBuffer];
 }
 
@@ -221,13 +219,14 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     _caContext = NULL;
     _styleMask = styleMask;
     _ready = NO;
+    cb = NULL;
     layer_surface = NULL;
     wl_subsurface = NULL;
     parentWindow = nil;
     decorationManager = NULL;
     decoration = NULL;
     preferredMode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
-    currentMode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+    currentMode = 0;
 
     _display = (WLDisplay *)[NSDisplay currentDisplay];
     struct wl_display *display = [_display display];
@@ -276,18 +275,14 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     } else if(!(_styleMask & WLWindowPopUp)) {
         xdg_surface = xdg_wm_base_get_xdg_surface(wm_base, wl_surface);
         xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
-        if(decorationManager) {
-            decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-                decorationManager, xdg_toplevel);
-            [self requestPreferredDecorations];
-        }
+        decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+            decorationManager, xdg_toplevel);
+        [self requestPreferredDecorations];
         xdg_surface_add_listener(xdg_surface, &xdg_surface_listener,
             (__bridge void *)self);
         xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener,
             (__bridge void *)self);
-        if(decorationManager)
-            zxdg_toplevel_decoration_v1_add_listener(decoration,
-                &decoration_listener, self);
+        zxdg_toplevel_decoration_v1_add_listener(decoration, &decoration_listener, self);
     }
     // if WLWindowPopUp we fall through to here
 
@@ -329,6 +324,7 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 
 -(void)dealloc
 {
+    [self clearRenderCallback];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self _destroySurface];
     if(registry)
@@ -571,6 +567,14 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 -(void) setLevel:(int)value
 {
     _level = value;
+    if(!layer_surface)
+        return;
+    unsigned int layer;
+    switch(value) {
+        case NSSubmenuWindowLevel: layer = WLWindowLayerOverlay;
+        default: layer = WLWindowLayerTop;
+    }
+    [self setLayer:layer];
 }
 
 -(void) showWindowForAppActivation:(O2Rect)frame
@@ -659,8 +663,14 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
     /* flush pending changes to our O2Surface & tell compositor we're ready */
     O2ContextFlush(_context);
     [self openGLFlushBuffer];
-    struct wl_callback *cb = wl_surface_frame(wl_surface);
+    cb = wl_surface_frame(wl_surface);
     wl_callback_add_listener(cb, &frame_listener, (__bridge void *)self);
+}
+
+-(void) clearRenderCallback {
+    if(cb != NULL)
+        wl_callback_destroy(cb);
+    cb = NULL;
 }
 
 // This seems wrong but it's exactly what was done in the Win32 version
@@ -712,7 +722,8 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 {
     _ready = ready;
     if(_ready) {
-        struct wl_callback *cb = wl_surface_frame(wl_surface);
+        [self clearRenderCallback];
+        cb = wl_surface_frame(wl_surface);
         wl_callback_add_listener(cb, &frame_listener, (__bridge void *)self);
     }
 }
@@ -736,6 +747,11 @@ static void renderCallback(void *data, struct wl_callback *cb, uint32_t time) {
 
 - (int)windowNumber {
     return (int)wl_surface;
+}
+
+-(void)setStyleMask:(unsigned)mask {
+    _styleMask = mask;
+    // FIXME: do we need to do anything else?
 }
 
 @end

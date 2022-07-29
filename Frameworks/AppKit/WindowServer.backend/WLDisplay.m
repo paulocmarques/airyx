@@ -63,8 +63,8 @@ const NSString *WLOutputXDGOutputKey = @"WLOutputXDGOutput";
 const NSString *WLModeSizeKey = @"WLModeSize";
 const NSString *WLModeRefreshKey = @"WLModeRefresh";
 
-NSString *WLOutputDidResizeNotification = @"WLOutputDidResizeNotification";
-NSString *WLOutputDidMoveNotification = @"WLOutputDidMoveNotification";
+const NSString *WLOutputDidResizeNotification = @"WLOutputDidResizeNotification";
+const NSString *WLOutputDidMoveNotification = @"WLOutputDidMoveNotification";
 
 @implementation NSDisplay(WL)
 
@@ -167,6 +167,18 @@ static void handlePointerButton(void *data, struct wl_pointer *ptr,
             break;
         case NSLeftMouseDown:
             pointerButtonState |= WLPointerPrimaryButton;
+            if(delegate) {
+                if([delegate attachedSheet]) {
+                    [[delegate attachedSheet] makeKeyAndOrderFront:delegate];
+                    return;
+                }
+                if(lastFocusedWindow) {
+                    [lastFocusedWindow platformWindowDeactivated:window checkForAppDeactivation:NO];
+                    lastFocusedWindow=nil;  
+                }
+                [delegate platformWindowActivated:window displayIfNeeded:YES];
+                lastFocusedWindow=delegate;
+            }
             break;
         case NSRightMouseUp:
             pointerButtonState &= ~WLPointerSecondaryButton;
@@ -313,7 +325,9 @@ static unichar translateKeySym(xkb_keysym_t keysym)
 }
 
 -(void)startKeyRepeat:(NSTimer *)timer {
-    [self postEvent:repeatEvent atStart:NO];
+    repeatDelayTimer = 0;
+    repeatEvent = [timer userInfo];
+    //[self postEvent:repeatEvent atStart:NO];
 }
 
 - (void)keyboardInput:(uint32_t)keycode eventType:(NSEventType)type autoUp:(BOOL)autoUp
@@ -321,6 +335,15 @@ static unichar translateKeySym(xkb_keysym_t keysym)
     xkb_keysym_t sym = xkb_state_key_get_one_sym(xkb_state, keycode);
     if(sym == XKB_KEY_NoSymbol)
         return;
+
+    if(repeatEvent != nil) {
+        [repeatEvent release];
+        repeatEvent = nil;
+    }
+    if(repeatDelayTimer != nil) {
+        [repeatDelayTimer invalidate];
+        repeatDelayTimer = nil;
+    }
 
     unichar nskey = translateKeySym(sym);
     NSString *strChars, *strCharsIg;
@@ -339,10 +362,6 @@ static unichar translateKeySym(xkb_keysym_t keysym)
     WLWindow *window = [self windowForID:(unsigned long)_keyboardActiveSurface];
     id delegate = [window delegate];
     
-    if(repeatEvent != nil) {
-        [repeatEvent release];
-        repeatEvent = nil;
-    }
     NSEvent *event = [NSEvent keyEventWithType:type
                                       location:pointerPosition
                                  modifierFlags:[self modifierFlagsForState:xkb_state]
@@ -371,7 +390,7 @@ static unichar translateKeySym(xkb_keysym_t keysym)
         } else {
             // set auto-repeat delay timer
             // FIXME: do not repeat modifier keys like Shift without a non-mod key
-            repeatEvent = [[NSEvent keyEventWithType:NSKeyDown
+            NSEvent *newEvent = [[NSEvent keyEventWithType:NSKeyDown
                                       location:[event locationInWindow]
                                  modifierFlags:[event modifierFlags]
                                      timestamp:0.0
@@ -381,8 +400,8 @@ static unichar translateKeySym(xkb_keysym_t keysym)
                    charactersIgnoringModifiers:[event charactersIgnoringModifiers]
                                      isARepeat:YES
                                        keyCode:[event keyCode]] retain];
-            [NSTimer scheduledTimerWithInterval:(float)repeatDelay/1000 target:self
-                selector:@selector(startKeyRepeat:) userInfo:nil repeats:NO];
+            repeatDelayTimer = [NSTimer scheduledTimerWithTimeInterval:(float)repeatDelay/1000.0
+                target:self selector:@selector(startKeyRepeat:) userInfo:newEvent repeats:NO];
         }
     }
 }
@@ -1063,7 +1082,7 @@ static const struct wl_registry_listener registry_listener = {
 
     [loop addInputSource:_inputSource forMode:mode];
     result = [super nextEventMatchingMask:mask untilDate:untilDate inMode:mode dequeue:dequeue];
-    [loop removeInputSource:_inputSource forMode:mode]; 
+    [loop removeInputSource:_inputSource forMode:mode];
     return result;
 }
 
@@ -1092,24 +1111,6 @@ NSArray *CGSOrderedWindowNumbers() {
 
 #if 0 // FIXME: this belongs in compositor?
 -(void)postXEvent:(XEvent *)ev {
-    case FocusIn:
-     if([delegate attachedSheet]) {
-      [[delegate attachedSheet] makeKeyAndOrderFront:delegate];
-      break;
-     }
-     if(lastFocusedWindow) {
-      [lastFocusedWindow platformWindowDeactivated:window checkForAppDeactivation:NO];
-      lastFocusedWindow=nil;  
-     }
-     [delegate platformWindowActivated:window displayIfNeeded:YES];
-     lastFocusedWindow=delegate;
-     break;
-     
-    case FocusOut:
-     [delegate platformWindowDeactivated:window checkForAppDeactivation:NO];
-     lastFocusedWindow=nil;
-     break;
-         
     case Expose:;
      O2Rect rect=NSMakeRect(ev->xexpose.x, ev->xexpose.y, ev->xexpose.width, ev->xexpose.height);
      
@@ -1131,12 +1132,6 @@ NSArray *CGSOrderedWindowNumbers() {
      [window frameChanged];
      [delegate platformWindow:window frameChanged:[window transformFrame:[window frame]] didSize:YES];
      break;
-
-
-    case ClientMessage:
-     if(ev->xclient.format=32 && ev->xclient.data.l[0]==XInternAtom(_display, "WM_DELETE_WINDOW", False))
-      [delegate platformWindowWillClose:window];
-     break;
 #endif
 
 -(void)selectInputSource:(NSSelectInputSource *)inputSource selectEvent:(NSUInteger)selectEvent {
@@ -1145,7 +1140,6 @@ NSArray *CGSOrderedWindowNumbers() {
     wl_display_flush(_display);
     wl_display_read_events(_display);
     wl_display_dispatch_pending(_display);
-    //[self postXEvent:&e];
 }
 
 -(int)handleError:(void*)errorEvent {

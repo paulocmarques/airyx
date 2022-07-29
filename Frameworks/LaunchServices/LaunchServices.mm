@@ -471,13 +471,8 @@ static void _LSCheckAndHandleLaunchFlags(NSTask *task, LSLaunchFlags launchFlags
     if(launchFlags & kLSLaunchNewInstance) {
         // FIXME: launch new instance of app
     }
-
-    Display *display = XOpenDisplay("unix:0.0");
-    int oldRevert, newRevert;
-    Window oldWindow = None, newWindow = None;
-
-    if(display) {
-        XGetInputFocus(display, &oldWindow, &oldRevert);
+    if(launchFlags & kLSLaunchDontSwitch) {
+        // FIXME: send a 'do not activate' request
     }
 
     // we may have already dup()'d other descriptors to 0,1,2 in `open`.
@@ -502,6 +497,16 @@ static void _LSCheckAndHandleLaunchFlags(NSTask *task, LSLaunchFlags launchFlags
         }
         launch_data_dict_insert(job, args, LAUNCH_JOBKEY_PROGRAMARGUMENTS);
         launch_data_dict_insert(job, launch_data_new_bool(true), LAUNCH_JOBKEY_RUNATLOAD);
+
+        NSDictionary *env = [task environment];
+        NSArray *keys = [env allKeys];
+        NSArray *vals = [env allValues];
+        launch_data_t envDict = launch_data_alloc(LAUNCH_DATA_DICTIONARY);
+        for(int i = 0; i < [keys count]; ++i)
+            launch_data_dict_insert(envDict,
+                launch_data_new_string([[vals objectAtIndex:i] UTF8String]),
+                [[keys objectAtIndex:i] UTF8String]);
+        launch_data_dict_insert(job, envDict, LAUNCH_JOBKEY_ENVIRONMENTVARIABLES);
 
         char *label = 0;
         asprintf(&label, "task.%lx.%s", hash, [[[task launchPath] lastPathComponent] UTF8String]);
@@ -532,53 +537,9 @@ static void _LSCheckAndHandleLaunchFlags(NSTask *task, LSLaunchFlags launchFlags
         [task launch];
     }
 
-    int times = 100000;
-    if(display) {
-        newWindow = oldWindow;
-        while(newWindow == oldWindow && times-- > 0) ;
-//            XGetInputFocus(display, &newWindow, &newRevert);
+    if(launchFlags & kLSLaunchAndHide) {
+        // FIXME: send a 'hide' request
     }
-
-    long pid = 0;
-    if(newWindow != None && newWindow != PointerRoot) {
-        Atom actualType;
-        int actualFormat;
-        unsigned long numItems, bytesAfter;
-        unsigned char *property;
-
-        if(XGetWindowProperty(display, newWindow,
-            // This way sucks because the app sets the property, but using
-            // XRes and XCB Res APIs did not return any PIDs -_-
-            XInternAtom(display, "_NET_WM_PID", True), 0, 1024, False,
-            AnyPropertyType, &actualType, &actualFormat, &numItems,
-            &bytesAfter, &property) == 0 && property != NULL)
-        {
-            pid = property[1] * 256;
-            pid = pid + property[0];
-            free(property);
-        }
-
-        if(pid == [task processIdentifier]) {
-            if(launchFlags & kLSLaunchDontSwitch) {
-                // KWin activated it. Need to switch away!
-                XLowerWindow(display, newWindow);
-                XSetInputFocus(display, oldWindow, oldRevert, CurrentTime);
-                PostXEvent(display, oldWindow, XInternAtom(display, "_NET_ACTIVE_WINDOW", False), 2L, CurrentTime, 0, 0, 0);
-                XFlush(display);
-            }
-            if(launchFlags & kLSLaunchAndHide) {
-                XWindowAttributes attr;
-                int screen = 0;
-                if(XGetWindowAttributes(display, newWindow, &attr))
-                    screen = XScreenNumberOfScreen(attr.screen);
-                XIconifyWindow(display, newWindow, screen);
-                XFlush(display);
-            }
-        }
-    }
-
-    if(display)
-        XCloseDisplay(display);
 
     if(launchFlags & kLSLaunchAndWaitForExit)
         [task waitUntilExit]; // FIXME: handle this for launchd tasks too

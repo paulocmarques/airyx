@@ -204,6 +204,8 @@ typedef enum {
 
 - (NSDockTile *)dockTile;
 
+- (void)addRecentItem:(NSURL *)url;
+
 // private
 - (DKMenu *)dbusMenu;
 - (DKConnection *)dbusConnection;
@@ -213,6 +215,8 @@ typedef enum {
 - (void)_windowDidBecomeActive:(NSWindow *)window;
 - (void)_windowWillBecomeDeactive:(NSWindow *)window;
 - (void)_windowDidBecomeDeactive:(NSWindow *)window;
+
+- (mach_port_t)_wsServicePort;
 
 @end
 

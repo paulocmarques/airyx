@@ -1293,7 +1293,7 @@ closefp_impl(struct filedesc *fdp, int fd, struct file *fp, struct thread *td,
 	 * We now hold the fp reference that used to be owned by the
 	 * descriptor array.  We have to unlock the FILEDESC *AFTER*
 	 * knote_fdclose to prevent a race of the fd getting opened, a knote
-	 * added, and deleteing a knote for the new fd.
+	 * added, and deleting a knote for the new fd.
 	 */
 	if (__predict_false(!TAILQ_EMPTY(&fdp->fd_kqlist)))
 		knote_fdclose(td, fd);
@@ -4971,7 +4971,7 @@ DB_SHOW_COMMAND(file, db_show_file)
 	db_print_file(fp, 1);
 }
 
-DB_SHOW_COMMAND(files, db_show_files)
+DB_SHOW_COMMAND_FLAGS(files, db_show_files, DB_CMD_MEMSAFE)
 {
 	struct filedesc *fdp;
 	struct file *fp;

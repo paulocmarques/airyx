@@ -1,4 +1,5 @@
 /* Copyright (c) 2006-2007 Christopher J. W. Lloyd
+   Copyright (c) 2022 Zoe Knox <zoe@pixin.net>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -51,7 +52,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 			size = [[self graphicsStyle] menuItemTextSize:[item _keyEquivalentDescription]];
 			ITEM_MAX(size);
 		}
-		if ([item hasSubmenu])
+		if ([item hasSubmenu] && [[item submenu] numberOfItems] > 0)
 		{
 			size = [[self graphicsStyle] menuItemBranchArrowSize];
 			ITEM_MAX(size);
@@ -257,7 +258,7 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
 			}
 			
 			// Draw the submenu arrow
-			if([item hasSubmenu])
+			if([item hasSubmenu] && [[item submenu] numberOfItems] > 0)
 			{
 				NSSize branchArrowSize = [[self graphicsStyle] menuItemBranchArrowSize];
 				partRect.origin.x = origin.x + NSWidth(itemArea) - branchArrowSize.width;
@@ -280,6 +281,8 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
     NSMenuItem *item=[items objectAtIndex:i];
 
     check.size.height=[self heightOfMenuItem:item];
+//    check.size.height+=2;
+//    check.origin.y-=2;
 
     if(NSMouseInRect(point,check,[self isFlipped]))
      return i;
@@ -290,13 +293,15 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
    return NSNotFound;
 }
 
--(void)positionBranchForSelectedItem:(NSWindow *)branch screen:(NSScreen *)screen {
+-(void)positionBranchForSelectedItem:(NSWindow *)branch window:(NSWindow *)window screen:(NSScreen *)screen {
    NSRect   branchFrame=[branch frame];
+   NSRect   windowFrame=[window frame];
    NSRect   screenVisible=[screen visibleFrame];
    NSArray *items=[[self menu] itemArray];
    unsigned i,count=[items count];
    NSRect   itemRect=boundsToTitleAreaRect([self bounds]);
    NSPoint  topLeft=NSZeroPoint;
+
 
    for(i=0;i<count;i++){
     NSMenuItem *item=[items objectAtIndex:i];
@@ -307,6 +312,7 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
      topLeft=itemRect.origin;
 
      topLeft.x+=itemRect.size.width;
+     //topLeft.x-=WINDOW_BORDER_THICKNESS;
      topLeft.y-=WINDOW_BORDER_THICKNESS;
 
      break;
@@ -341,6 +347,9 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
     topLeft.x=redo.x;
    }
 
+    topLeft.y -= windowFrame.origin.y;
+    topLeft.x -= windowFrame.origin.x;
+
    [branch setFrameTopLeftPoint:topLeft];
 }
 
@@ -350,11 +359,12 @@ static NSRect boundsToTitleAreaRect(NSRect rect){
    if(_selectedItemIndex<[items count]){
     NSMenuItem *item=[items objectAtIndex:_selectedItemIndex];
 
-    if([item hasSubmenu]){
+    if([item hasSubmenu] && [[item submenu] numberOfItems] > 0){
      NSMenuWindow *branch=[[NSMenuWindow alloc] initWithMenu:[item submenu]];
 
-     [self positionBranchForSelectedItem:branch screen:screen];
+     [self positionBranchForSelectedItem:branch window:[self window] screen:screen];
 
+     [branch setParent:[self window]];
      [branch orderFront:nil];
      return [branch menuView];
     }

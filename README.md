@@ -1,5 +1,5 @@
 # What is ravynOS? [![Build Status](https://api.cirrus-ci.com/github/ravynsoft/ravynos.svg?branch=main)](https://cirrus-ci.com/github/ravynsoft/ravynos) [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
-### Don't speak English? Read this in: [Italiano](README.IT.md) 
+### Don't speak English? Read this in: [Italiano](README.IT.md), [Türkçe](README_TR.md)
 
 ravynOS is a new open source OS project that aims to provide a similar experience and some compatibility with macOS on x86-64 (and eventually ARM) systems. It builds on the solid foundations of FreeBSD, existing open source packages in the same space, and new code to fill the gaps.
 
@@ -19,12 +19,8 @@ Please visit [ravynos.com](https://ravynos.com/) for more info: [Release Notes](
 
 * Can you help build the dream? See the current projects/needs in [CONTRIBUTING.md](CONTRIBUTING.md)!
 * Our [Discord](https://discord.com/invite/8caJbAGNwY) server.
-* `#airyx:matrix.org` - join via [Element.io](https://app.element.io/#/room/#airyx:matrix.org)
+* `#ravynOS-general:matrix.org` - join via [Element.io](https://app.element.io/#/room/%23ravynOS-general:matrix.org)
 * `#airyx` on [Libera IRC](https://web.libera.chat/?channel=#airyx)
-
-_(note: `#airyx` on matrix.org and IRC are bridged with `#general` on Discord)_
-
-New logo designs & artwork by [nayaabkhan](https://nayaabkhan.me). Hat tip for the palm tree concept to [llui85](https://github.com/llui85).
 
 [![Packages hosted by: Cloudsmith](https://img.shields.io/badge/OSS%20hosting%20by-cloudsmith-blue?logo=cloudsmith&style=flat-square)](https://cloudsmith.com)
 

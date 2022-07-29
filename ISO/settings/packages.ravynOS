@@ -3,10 +3,13 @@ avahi-app
 bash
 bash-completion
 ca_root_nss
+cairo
 cpdup
 dbus
 dmidecode
 drm-devel-kmod
+fcft
+foot
 glib
 gpu-firmware-kmod
 #libdbusmenu
@@ -17,6 +20,7 @@ libqtxdg
 #libXres
 libudev-devd
 libva-intel-driver
+libxcb
 libxshmfence
 mesa-libs
 mesa-gallium-xa
@@ -40,6 +44,7 @@ nss_mdns
 #py38-qt5-multimedia
 #py38-qt5-webengine
 #openssl
+pango
 pixman
 pkg
 python3
@@ -64,6 +69,9 @@ pkgconf
 #qt5-buildtools
 #lxqt-build-tools
 usbids
+utf8proc
+vulkan-loader
+xcb-util-errors
 xdg-user-dirs
 xdg-utils
 zsh
