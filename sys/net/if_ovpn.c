@@ -513,7 +513,7 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 	callout_init_rm(&peer->ping_send, &sc->lock, CALLOUT_SHAREDLOCK);
 	callout_init_rm(&peer->ping_rcv, &sc->lock, 0);
 
-	ret = (*so->so_proto->pr_usrreqs->pru_sockaddr)(so, &name);
+	ret = so->so_proto->pr_sockaddr(so, &name);
 	if (ret)
 		goto error;
 
@@ -556,6 +556,12 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 	/* Disallow peer id re-use. */
 	if (ovpn_find_peer(sc, peerid) != NULL) {
 		ret = EEXIST;
+		goto error_locked;
+	}
+
+	/* Make sure this is really a UDP socket. */
+	if (so->so_type != SOCK_DGRAM || so->so_proto->pr_type != SOCK_DGRAM) {
+		ret = EPROTOTYPE;
 		goto error_locked;
 	}
 
@@ -1576,6 +1582,7 @@ ovpn_get_af(struct mbuf *m)
 	return (0);
 }
 
+#ifdef INET
 static struct ovpn_kpeer *
 ovpn_find_peer_by_ip(struct ovpn_softc *sc, const struct in_addr addr)
 {
@@ -1594,7 +1601,9 @@ ovpn_find_peer_by_ip(struct ovpn_softc *sc, const struct in_addr addr)
 
 	return (peer);
 }
+#endif
 
+#ifdef INET6
 static struct ovpn_kpeer *
 ovpn_find_peer_by_ip6(struct ovpn_softc *sc, const struct in6_addr *addr)
 {
@@ -1613,6 +1622,7 @@ ovpn_find_peer_by_ip6(struct ovpn_softc *sc, const struct in6_addr *addr)
 
 	return (peer);
 }
+#endif
 
 static struct ovpn_kpeer *
 ovpn_route_peer(struct ovpn_softc *sc, struct mbuf **m0,

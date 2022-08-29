@@ -5186,7 +5186,7 @@ DIOCCHANGEADDR_error:
 			break;
 		}
 		/* Ensure there's no more ethernet rules to clean up. */
-		epoch_drain_callbacks(net_epoch_preempt);
+		NET_EPOCH_DRAIN_CALLBACKS();
 		PF_RULES_WLOCK();
 		for (i = 0, ioe = ioes; i < io->size; i++, ioe++) {
 			ioe->anchor[sizeof(ioe->anchor) - 1] = '\0';
@@ -6713,6 +6713,9 @@ pf_unload_vnet(void)
 	pf_syncookies_cleanup();
 	shutdown_pf();
 	PF_RULES_WUNLOCK();
+
+	/* Make sure we've cleaned up ethernet rules before we continue. */
+	NET_EPOCH_DRAIN_CALLBACKS();
 
 	ret = swi_remove(V_pf_swi_cookie);
 	MPASS(ret == 0);

@@ -1727,7 +1727,7 @@ pv_to_chunk(pv_entry_t pv)
 
 #define	PC_FREE0	0xfffffffffffffffful
 #define	PC_FREE1	0xfffffffffffffffful
-#define	PC_FREE2	0x000000fffffffffful
+#define	PC_FREE2	((1ul << (_NPCPV % 64)) - 1)
 
 static const uint64_t pc_freemask[_NPCM] = { PC_FREE0, PC_FREE1, PC_FREE2 };
 
@@ -2605,6 +2605,8 @@ pmap_fault(pmap_t pmap, vm_offset_t va, vm_prot_t ftype)
 	pd_entry_t *l2, l2e;
 	pt_entry_t bits, *pte, oldpte;
 	int rv;
+
+	KASSERT(VIRT_IS_VALID(va), ("pmap_fault: invalid va %#lx", va));
 
 	rv = 0;
 	PMAP_LOCK(pmap);

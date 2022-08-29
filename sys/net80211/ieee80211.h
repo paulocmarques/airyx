@@ -196,6 +196,9 @@ struct ieee80211_qosframe_addr4 {
 #define	IEEE80211_FC1_PROTECTED			0x40
 #define	IEEE80211_FC1_ORDER			0x80
 
+#define	IEEE80211_IS_PROTECTED(wh) \
+	((wh)->i_fc[1] & IEEE80211_FC1_PROTECTED)
+
 #define IEEE80211_HAS_SEQ(type, subtype) \
 	((type) != IEEE80211_FC0_TYPE_CTL && \
 	!((type) == IEEE80211_FC0_TYPE_DATA && \
@@ -766,10 +769,14 @@ struct ieee80211_ie_htinfo {
  * + rx_mcs_map/tx_mcs_map: bitmap of per-stream supported MCS;
  *    2 bits each.
  */
-#define	IEEE80211_VHT_MCS_SUPPORT_0_7		0	/* MCS0-7 */
-#define	IEEE80211_VHT_MCS_SUPPORT_0_8		1	/* MCS0-8 */
-#define	IEEE80211_VHT_MCS_SUPPORT_0_9		2	/* MCS0-9 */
-#define	IEEE80211_VHT_MCS_NOT_SUPPORTED		3	/* not supported */
+
+/* 802.11ac-2013, 8.4.2.160.3 Supported VHT-MCS and NSS Set field */
+enum ieee80211_vht_mcs_support {
+	IEEE80211_VHT_MCS_SUPPORT_0_7		= 0,	/* MCS0-7 */
+	IEEE80211_VHT_MCS_SUPPORT_0_8		= 1,	/* MCS0-8 */
+	IEEE80211_VHT_MCS_SUPPORT_0_9		= 2,	/* MCS0-9 */
+	IEEE80211_VHT_MCS_NOT_SUPPORTED		= 3	/* not supported */
+};
 
 struct ieee80211_vht_mcs_info {
 	uint16_t rx_mcs_map;
@@ -1009,10 +1016,16 @@ enum {
 	IEEE80211_ELEMID_MESHPXUC	= 138,
 	IEEE80211_ELEMID_MESHAH		= 60, /* XXX: remove */
 
-	/* 802.11ac */
+	/* 802.11ac-2013, Table 8-54-Element IDs */
 	IEEE80211_ELEMID_VHT_CAP	= 191,
 	IEEE80211_ELEMID_VHT_OPMODE	= 192,
+	IEEE80211_ELEMID_EXTENDED_BSS_LOAD = 193,
+	IEEE80211_ELEMID_WIDE_BW_CHANNEL_SWITCH = 194,
 	IEEE80211_ELEMID_VHT_PWR_ENV	= 195,
+	IEEE80211_ELEMID_CHANNEL_SWITCH_WRAPPER = 196,
+	IEEE80211_ELEMID_AID		= 197,
+	IEEE80211_ELEMID_QUIET_CHANNEL	= 198,
+	IEEE80211_ELEMID_OPMODE_NOTIF	= 199,
 };
 
 struct ieee80211_tim_ie {

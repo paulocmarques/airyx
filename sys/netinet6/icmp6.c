@@ -114,7 +114,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet6/nd6.h>
 #include <netinet6/send.h>
 
-extern struct domain inet6domain;
+extern ipproto_ctlinput_t	*ip6_ctlprotox[];
 
 VNET_PCPUSTAT_DEFINE(struct icmp6stat, icmp6stat);
 VNET_PCPUSTAT_SYSINIT(icmp6stat);
@@ -922,7 +922,6 @@ icmp6_notify_error(struct mbuf **mp, int off, int icmp6len, int code)
 
 	/* Detect the upper level protocol */
 	{
-		void (*ctlfunc)(int, struct sockaddr *, void *);
 		u_int8_t nxt = eip6->ip6_nxt;
 		int eoff = off + sizeof(struct icmp6_hdr) +
 		    sizeof(struct ip6_hdr);
@@ -1087,12 +1086,9 @@ icmp6_notify_error(struct mbuf **mp, int off, int icmp6len, int code)
 			icmp6_mtudisc_update(&ip6cp, 1);	/*XXX*/
 		}
 
-		ctlfunc = (void (*)(int, struct sockaddr *, void *))
-		    (inet6sw[ip6_protox[nxt]].pr_ctlinput);
-		if (ctlfunc) {
-			(void) (*ctlfunc)(code, (struct sockaddr *)&icmp6dst,
+		if (ip6_ctlprotox[nxt] != NULL)
+			ip6_ctlprotox[nxt](code, (struct sockaddr *)&icmp6dst,
 			    &ip6cp);
-		}
 	}
 	*mp = m;
 	return (0);
@@ -1111,6 +1107,7 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 	struct mbuf *m = ip6cp->ip6c_m;	/* will be necessary for scope issue */
 	u_int mtu = ntohl(icmp6->icmp6_mtu);
 	struct in_conninfo inc;
+	uint32_t max_mtu;
 
 #if 0
 	/*
@@ -1151,7 +1148,11 @@ icmp6_mtudisc_update(struct ip6ctlparam *ip6cp, int validated)
 	if (in6_setscope(&inc.inc6_faddr, m->m_pkthdr.rcvif, NULL))
 		return;
 
-	if (mtu < tcp_maxmtu6(&inc, NULL)) {
+	max_mtu = tcp_hc_getmtu(&inc);
+	if (max_mtu == 0)
+		max_mtu = tcp_maxmtu6(&inc, NULL);
+
+	if (mtu < max_mtu) {
 		tcp_hc_updatemtu(&inc, mtu);
 		ICMP6STAT_INC(icp6s_pmtuchg);
 	}
@@ -2126,20 +2127,6 @@ icmp6_reflect(struct mbuf *m, size_t off)
 	return;
 }
 
-void
-icmp6_fasttimo(void)
-{
-
-	mld_fasttimo();
-}
-
-void
-icmp6_slowtimo(void)
-{
-
-	mld_slowtimo();
-}
-
 static const char *
 icmp6_redirect_diag(struct in6_addr *src6, struct in6_addr *dst6,
     struct in6_addr *tgt6)
@@ -2345,16 +2332,6 @@ icmp6_redirect_input(struct mbuf *m, int off)
 			    (struct sockaddr *)&ssrc, ifp, rt_flags,
 			    V_icmp6_redirtimeout);
 	}
-	/* finally update cached route in each socket via pfctlinput */
-    {
-	struct sockaddr_in6 sdst;
-
-	bzero(&sdst, sizeof(sdst));
-	sdst.sin6_family = AF_INET6;
-	sdst.sin6_len = sizeof(struct sockaddr_in6);
-	bcopy(&reddst6, &sdst.sin6_addr, sizeof(struct in6_addr));
-	pfctlinput(PRC_REDIRECT_HOST, (struct sockaddr *)&sdst);
-    }
 
  freeit:
 	m_freem(m);

@@ -324,6 +324,11 @@ int pci_alloc_irq_vectors(struct pci_dev *pdev, int minv, int maxv,
 struct pci_dev *lkpinew_pci_dev(device_t);
 struct pci_devres *lkpi_pci_devres_get_alloc(struct pci_dev *pdev);
 void lkpi_pci_devres_release(struct device *, void *);
+// struct resource *_lkpi_pci_iomap_range(struct pci_dev *pdev, int bar, unsigned long offset, int mmio_size);
+void __iomem *pci_iomap_range(struct pci_dev *dev,
+			      int bar,
+			      unsigned long offset,
+			      unsigned long maxlen);
 struct resource *_lkpi_pci_iomap(struct pci_dev *pdev, int bar, int mmio_size);
 struct pcim_iomap_devres *lkpi_pcim_iomap_devres_find(struct pci_dev *pdev);
 void lkpi_pcim_iomap_table_release(struct device *, void *);
@@ -1512,6 +1517,36 @@ static inline void
 linuxkpi_pcim_want_to_use_bus_functions(struct pci_dev *pdev)
 {
 	pdev->want_iomap_res = true;
+}
+
+static inline bool
+pci_is_thunderbolt_attached(struct pci_dev *pdev)
+{
+
+	return (false);
+}
+
+static inline void *
+pci_platform_rom(struct pci_dev *pdev, size_t *size)
+{
+
+	return (NULL);
+}
+
+static inline void
+pci_ignore_hotplug(struct pci_dev *pdev)
+{
+}
+
+static inline int
+pcie_get_readrq(struct pci_dev *dev)
+{
+	u16 ctl;
+
+	if (pcie_capability_read_word(dev, PCI_EXP_DEVCTL, &ctl))
+		return (-EINVAL);
+
+	return (128 << ((ctl & PCI_EXP_DEVCTL_READRQ) >> 12));
 }
 
 #endif	/* _LINUXKPI_LINUX_PCI_H_ */

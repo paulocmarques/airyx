@@ -91,6 +91,8 @@ static const char *bootstrap_names []  = {
 
 STAILQ_HEAD(fingerprint_list, fingerprint);
 
+static int debug;
+
 static int
 extract_pkg_static(int fd, char *p, int sz)
 {
@@ -236,9 +238,7 @@ fetch_to_fd(const char *url, char *path, const char *fetchOpts)
 			--retry;
 			if (retry <= 0)
 				goto fetchfail;
-			if (mirrors == NULL) {
-				sleep(1);
-			} else {
+			if (mirrors != NULL) {
 				current = current->next;
 				if (current == NULL)
 					current = mirrors;
@@ -1115,6 +1115,7 @@ main(int argc, char *argv[])
 	yes = false;
 
 	struct option longopts[] = {
+		{ "debug",		no_argument,		NULL,	'd' },
 		{ "force",		no_argument,		NULL,	'f' },
 		{ "only-ipv4",		no_argument,		NULL,	'4' },
 		{ "only-ipv6",		no_argument,		NULL,	'6' },
@@ -1124,8 +1125,11 @@ main(int argc, char *argv[])
 
 	snprintf(pkgpath, MAXPATHLEN, "%s/sbin/pkg", getlocalbase());
 
-	while ((ch = getopt_long(argc, argv, "-:fr::yN46", longopts, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, "-:dfr::yN46", longopts, NULL)) != -1) {
 		switch (ch) {
+		case 'd':
+			debug++;
+			break;
 		case 'f':
 			force = true;
 			break;
@@ -1222,6 +1226,8 @@ main(int argc, char *argv[])
 			break;
 		}
 	}
+	if (debug > 1)
+		fetchDebug = 1;
 
 	if ((bootstrap_only && force) || access(pkgpath, X_OK) == -1) {
 		/* 

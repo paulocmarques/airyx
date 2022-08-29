@@ -224,8 +224,6 @@ proc_set_p2_wexit(struct proc *p)
 {
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	p->p_flag2 |= P2_WEXIT;
-	while (p->p_singlethr > 0)
-		msleep(&p->p_singlethr, &p->p_mtx, PWAIT | PCATCH, "exit1t", 0);
 }
 
 /*
@@ -265,9 +263,11 @@ exit1(struct thread *td, int rval, int signo)
 #endif
 
 	/*
-	 * Deref SU mp, since the thread does not return to userspace.
+	 * Process deferred operations, designated with ASTF_KCLEAR.
+	 * For instance, we need to deref SU mp, since the thread does
+	 * not return to userspace, and wait for geom to stabilize.
 	 */
-	td_softdep_cleanup(td);
+	ast_kclear(td);
 
 	/*
 	 * MUST abort all other threads before proceeding past here.
@@ -287,16 +287,15 @@ exit1(struct thread *td, int rval, int signo)
 		 * Kill off the other threads. This requires
 		 * some co-operation from other parts of the kernel
 		 * so it may not be instantaneous.  With this state set
-		 * any thread entering the kernel from userspace will
-		 * thread_exit() in trap().  Any thread attempting to
+		 * any thread attempting to interruptibly
 		 * sleep will return immediately with EINTR or EWOULDBLOCK
 		 * which will hopefully force them to back out to userland
 		 * freeing resources as they go.  Any thread attempting
-		 * to return to userland will thread_exit() from userret().
+		 * to return to userland will thread_exit() from ast().
 		 * thread_exit() will unsuspend us when the last of the
 		 * other threads exits.
 		 * If there is already a thread singler after resumption,
-		 * calling thread_single will fail; in that case, we just
+		 * calling thread_single() will fail; in that case, we just
 		 * re-check all suspension request, the thread should
 		 * either be suspended there or exit.
 		 */
@@ -419,13 +418,6 @@ exit1(struct thread *td, int rval, int signo)
 	fdescfree(td);
 
 	/*
-	 * If this thread tickled GEOM, we need to wait for the giggling to
-	 * stop before we return to userland
-	 */
-	if (td->td_pflags & TDP_GEOM)
-		g_waitidle();
-
-	/*
 	 * Remove ourself from our leader's peer list and wake our leader.
 	 */
 	if (p->p_leader->p_peers != NULL) {
@@ -517,7 +509,7 @@ exit1(struct thread *td, int rval, int signo)
 		wakeup(q->p_reaper);
 	for (; q != NULL; q = nq) {
 		nq = LIST_NEXT(q, p_sibling);
-		ksi = ksiginfo_alloc(TRUE);
+		ksi = ksiginfo_alloc(M_WAITOK);
 		PROC_LOCK(q);
 		q->p_sigparent = SIGCHLD;
 
