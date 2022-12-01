@@ -486,6 +486,7 @@ exit1(struct thread *td, int rval, int signo)
 	 */
 	p->p_list.le_prev = NULL;
 #endif
+	prison_proc_unlink(p->p_ucred->cr_prison, p);
 	sx_xunlock(&allproc_lock);
 
 	sx_xlock(&proctree_lock);
@@ -777,7 +778,7 @@ sys_abort2(struct thread *td, struct abort2_args *uap)
  * kern_abort2()
  * Arguments:
  *  why - user pointer to why
- *  nargs - number of arguments copied or -1 if an error occured in copying
+ *  nargs - number of arguments copied or -1 if an error occurred in copying
  *  args - pointer to an array of pointers in kernel format
  */
 int
@@ -1282,8 +1283,8 @@ report_alive_proc(struct thread *td, struct proc *p, siginfo_t *siginfo,
 	}
 	if (status != NULL)
 		*status = cont ? SIGCONT : W_STOPCODE(p->p_xsig);
-	PROC_UNLOCK(p);
 	td->td_retval[0] = p->p_pid;
+	PROC_UNLOCK(p);
 }
 
 int
