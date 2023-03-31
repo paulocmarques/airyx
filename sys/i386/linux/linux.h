@@ -279,39 +279,6 @@ union l_semun {
 	l_uintptr_t	__pad;
 };
 
-struct l_ifmap {
-	l_ulong		mem_start;
-	l_ulong		mem_end;
-	l_ushort	base_addr;
-	u_char		irq;
-	u_char		dma;
-	u_char		port;
-};
-
-struct l_ifreq {
-	union {
-		char	ifrn_name[LINUX_IFNAMSIZ];
-	} ifr_ifrn;
-
-	union {
-		struct l_sockaddr	ifru_addr;
-		struct l_sockaddr	ifru_dstaddr;
-		struct l_sockaddr	ifru_broadaddr;
-		struct l_sockaddr	ifru_netmask;
-		struct l_sockaddr	ifru_hwaddr;
-		l_short		ifru_flags[1];
-		l_int		ifru_ivalue;
-		l_int		ifru_mtu;
-		struct l_ifmap	ifru_map;
-		char		ifru_slave[LINUX_IFNAMSIZ];
-		l_caddr_t	ifru_data;
-	} ifr_ifru;
-};
-
-#define	ifr_name	ifr_ifrn.ifrn_name	/* Interface name */
-#define	ifr_hwaddr	ifr_ifru.ifru_hwaddr	/* MAC address */
-#define	ifr_ifindex	ifr_ifru.ifru_ivalue	/* Interface index */
-
 struct l_user_desc {
 	l_uint		entry_number;
 	l_uint		base_addr;
@@ -394,5 +361,33 @@ struct l_desc_struct {
 	(((desc)->b >> LINUX_ENTRY_B_USEABLE) & 1)
 
 #define	linux_copyout_rusage(r, u)	copyout(r, u, sizeof(*r))
+
+/* This corresponds to 'struct user_regs_struct' in Linux. */
+struct linux_pt_regset {
+	l_uint ebx;
+	l_uint ecx;
+	l_uint edx;
+	l_uint esi;
+	l_uint edi;
+	l_uint ebp;
+	l_uint eax;
+	l_uint ds;
+	l_uint es;
+	l_uint fs;
+	l_uint gs;
+	l_uint orig_eax;
+	l_uint eip;
+	l_uint cs;
+	l_uint eflags;
+	l_uint esp;
+	l_uint ss;
+};
+
+#ifdef _KERNEL
+struct reg;
+
+void	bsd_to_linux_regset(const struct reg *b_reg,
+	    struct linux_pt_regset *l_regset);
+#endif /* _KERNEL */
 
 #endif /* !_I386_LINUX_H_ */

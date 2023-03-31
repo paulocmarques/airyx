@@ -1350,7 +1350,7 @@ tcp_set_pacing_rate(struct tcpcb *tp, struct ifnet *ifp,
 		}
 #ifdef KERN_TLS
 		tls = NULL;
-		if (tptosocket(tp)->so_snd.sb_flags & SB_TLS_IFNET) {
+		if (tp->t_nic_ktls_xmit != 0) {
 			tls = tptosocket(tp)->so_snd.sb_tls_info;
 
 			if ((ifp->if_capenable & IFCAP_TXTLS_RTLMT) == 0 ||
@@ -1413,7 +1413,7 @@ tcp_chg_pacing_rate(const struct tcp_hwrate_limit_table *crte,
 	}
 
 #ifdef KERN_TLS
-	if (tptosocket(tp)->so_snd.sb_flags & SB_TLS_IFNET) {
+	if (tp->t_nic_ktls_xmit) {
 		tls = tptosocket(tp)->so_snd.sb_tls_info;
 		if (tls->mode != TCP_TLS_MODE_IFNET)
 			tls = NULL;
@@ -1572,7 +1572,7 @@ tcp_log_pacing_size(struct tcpcb *tp, uint64_t bw, uint32_t segsiz, uint32_t new
 		    uint64_t hw_rate, uint32_t time_between, uint32_t calc_time_between,
 		    uint32_t segs, uint32_t res_div, uint16_t mult, uint8_t mod)
 {
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 

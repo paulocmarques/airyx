@@ -50,7 +50,6 @@ CONFS=	DAEMON \
 	local \
 	localpkg \
 	lockd \
-	machine_id \
 	mixer \
 	motd \
 	mountcritlocal \
@@ -255,8 +254,10 @@ JAILPACKAGE=	jail
 .endif
 
 .if ${MK_LEGACY_CONSOLE} != "no"
-CONFS+=		moused
-CONFS+=		syscons
+CONFGROUPS+=	CONSOLE
+CONSOLE+=	moused
+CONSOLE+=	syscons
+CONSOLEPACKAGE=	console-tools
 .endif
 
 .if ${MK_LPR} != "no"

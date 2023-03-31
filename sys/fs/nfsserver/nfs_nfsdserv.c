@@ -672,10 +672,10 @@ nfsrvd_lookup(struct nfsrv_descript *nd, __unused int isdgram,
 		goto out;
 	}
 	if (nd->nd_flag & ND_NFSV2) {
-		(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 0);
+		nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 0);
 		nfsrv_fillattr(nd, &nva);
 	} else if (nd->nd_flag & ND_NFSV3) {
-		(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 0);
+		nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 0);
 		nfsrv_postopattr(nd, 0, &nva);
 		nfsrv_postopattr(nd, dattr_ret, &dattr);
 	}
@@ -1282,7 +1282,7 @@ nfsrvd_create(struct nfsrv_descript *nd, __unused int isdgram,
 	}
 	if (nd->nd_flag & ND_NFSV2) {
 		if (!nd->nd_repstat) {
-			(void) nfsm_fhtom(nd, (u_int8_t *)&fh, 0, 0);
+			nfsm_fhtom(NULL, nd, (u_int8_t *)&fh, 0, 0);
 			nfsrv_fillattr(nd, &nva);
 		}
 	} else {
@@ -1292,7 +1292,7 @@ nfsrvd_create(struct nfsrv_descript *nd, __unused int isdgram,
 		diraft_ret = nfsvno_getattr(dirp, &diraft, nd, p, 0, NULL);
 		vrele(dirp);
 		if (!nd->nd_repstat) {
-			(void) nfsm_fhtom(nd, (u_int8_t *)&fh, 0, 1);
+			nfsm_fhtom(NULL, nd, (u_int8_t *)&fh, 0, 1);
 			nfsrv_postopattr(nd, 0, &nva);
 		}
 		nfsrv_wcc(nd, dirfor_ret, &dirfor, diraft_ret, &diraft);
@@ -1492,7 +1492,7 @@ nfsrvd_mknod(struct nfsrv_descript *nd, __unused int isdgram,
 	vrele(dirp);
 	if (!nd->nd_repstat) {
 		if (nd->nd_flag & ND_NFSV3) {
-			(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 1);
+			nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 1);
 			nfsrv_postopattr(nd, 0, &nva);
 		} else {
 			NFSM_BUILD(tl, u_int32_t *, 5 * NFSX_UNSIGNED);
@@ -1946,7 +1946,7 @@ nfsrvd_symlink(struct nfsrv_descript *nd, __unused int isdgram,
 
 	if (nd->nd_flag & ND_NFSV3) {
 		if (!nd->nd_repstat) {
-			(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 1);
+			nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 1);
 			nfsrv_postopattr(nd, 0, &nva);
 		}
 		nfsrv_wcc(nd, dirfor_ret, &dirfor, diraft_ret, &diraft);
@@ -2070,12 +2070,12 @@ nfsrvd_mkdir(struct nfsrv_descript *nd, __unused int isdgram,
 
 	if (nd->nd_flag & ND_NFSV3) {
 		if (!nd->nd_repstat) {
-			(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 1);
+			nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 1);
 			nfsrv_postopattr(nd, 0, &nva);
 		}
 		nfsrv_wcc(nd, dirfor_ret, &dirfor, diraft_ret, &diraft);
 	} else if (!nd->nd_repstat) {
-		(void) nfsm_fhtom(nd, (u_int8_t *)fhp, 0, 0);
+		nfsm_fhtom(NULL, nd, (u_int8_t *)fhp, 0, 0);
 		nfsrv_fillattr(nd, &nva);
 	}
 
@@ -3043,7 +3043,6 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 		if (!nd->nd_repstat) {
 			nd->nd_repstat = nfsvno_namei(nd, &named, dp, 0, exp,
 			    &dirp);
-			done_namei = true;
 		} else {
 			vrele(dp);
 			nfsvno_relpathbuf(&named);
@@ -3051,7 +3050,7 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 		if (create == NFSV4OPEN_CREATE) {
 		    switch (how) {
 		    case NFSCREATE_UNCHECKED:
-			if (done_namei && named.ni_vp != NULL) {
+			if (nd->nd_repstat == 0 && named.ni_vp != NULL) {
 				/*
 				 * Clear the setable attribute bits, except
 				 * for Size, if it is being truncated.
@@ -3063,13 +3062,14 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 			}
 			break;
 		    case NFSCREATE_GUARDED:
-			if (done_namei && named.ni_vp != NULL &&
-			    nd->nd_repstat == 0)
+			if (nd->nd_repstat == 0 && named.ni_vp != NULL) {
 				nd->nd_repstat = EEXIST;
+				done_namei = true;
+			}
 			break;
 		    case NFSCREATE_EXCLUSIVE:
 			exclusive_flag = 1;
-			if (done_namei && named.ni_vp == NULL)
+			if (nd->nd_repstat == 0 && named.ni_vp == NULL)
 				nva.na_mode = 0;
 			break;
 		    case NFSCREATE_EXCLUSIVE41:
@@ -3462,7 +3462,7 @@ nfsrvd_getfh(struct nfsrv_descript *nd, __unused int isdgram,
 	nd->nd_repstat = nfsvno_getfh(vp, &fh, p);
 	vput(vp);
 	if (!nd->nd_repstat)
-		(void) nfsm_fhtom(nd, (u_int8_t *)&fh, 0, 0);
+		nfsm_fhtom(NULL, nd, (u_int8_t *)&fh, 0, 0);
 	NFSEXITCODE2(0, nd);
 	return (0);
 }

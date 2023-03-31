@@ -249,31 +249,22 @@ hostdisk_one_disk(struct host_dirent64 *dent, void *argp __unused)
 	return (true);
 }
 
-static bool
-hostdisk_fake_one_disk(struct host_dirent64 *dent, void *argp)
+static void
+hostdisk_fake_one_disk(char *override)
 {
-	char *override_dir = argp;
-	char *fn = NULL;
 	hdinfo_t *hd = NULL;
 	struct host_kstat sb;
 
-	/*
-	 * We only do regular files. Each one is treated as a disk image
-	 * accessible via /dev/${dent->d_name}.
-	 */
-	if (dent->d_type != HOST_DT_REG && dent->d_type != HOST_DT_LNK)
-		return (true);
-	if (asprintf(&fn, "%s/%s", override_dir, dent->d_name) == -1)
-		return (true);
-	if (host_stat(fn, &sb) != 0)
-		goto err;
+	if (host_stat(override, &sb) != 0)
+		return;
 	if (!HOST_S_ISREG(sb.st_mode))
-		return (true);
+		return;
 	if (sb.st_size == 0)
-		goto err;
+		return;
 	if ((hd = calloc(1, sizeof(*hd))) == NULL)
+		return;
+	if ((hd->hd_dev = strdup(override)) == NULL)
 		goto err;
-	hd->hd_dev = fn;
 	hd->hd_size = sb.st_size;
 	hd->hd_sectorsize = 512;	/* XXX configurable? */
 	hd->hd_sectors = hd->hd_size / hd->hd_sectorsize;
@@ -284,12 +275,10 @@ hostdisk_fake_one_disk(struct host_dirent64 *dent, void *argp)
 	printf("%s: %ju %ju %ju\n",
 	    hd->hd_dev, hd->hd_size, hd->hd_sectors, hd->hd_sectorsize);
 	STAILQ_INSERT_TAIL(&hdinfo, hd, hd_link);
-	/* XXX no partiions? -- is that OK? */
-	return (true);
+	return;
 err:
+	free(__DECONST(void *, hd->hd_dev));
 	free(hd);
-	free(fn);
-	return (true);
 }
 
 static void
@@ -299,7 +288,7 @@ hostdisk_find_block_devices(void)
 
 	override=getenv("hostdisk_override");
 	if (override != NULL)
-		foreach_file(override, hostdisk_fake_one_disk, override, 0);
+		hostdisk_fake_one_disk(override);
 	else
 		foreach_file(SYSBLK, hostdisk_one_disk, NULL, 0);
 }
@@ -429,8 +418,10 @@ done:
 static char *
 hostdisk_fmtdev(struct devdesc *vdev)
 {
+	static char name[DEV_DEVLEN];
 
-	return ((char *)hd_name(dev2hd(vdev)));
+	snprintf(name, sizeof(name), "%s:", dev2hd(vdev)->hd_dev);
+	return (name);
 }
 
 static bool
@@ -486,6 +477,61 @@ hostdisk_parsedev(struct devdesc **idev, const char *devspec, const char **path)
 	return (0);
 }
 
+/* XXX refactor */
+static bool
+sanity_check_currdev(void)
+{
+	struct stat st;
+
+	return (stat(PATH_DEFAULTS_LOADER_CONF, &st) == 0 ||
+#ifdef PATH_BOOTABLE_TOKEN
+	    stat(PATH_BOOTABLE_TOKEN, &st) == 0 || /* non-standard layout */
+#endif
+	    stat(PATH_KERNEL, &st) == 0);
+}
+
+static const char *
+hostdisk_try_one(hdinfo_t *hd)
+{
+	char *fn;
+
+	if (asprintf(&fn, "%s:", hd->hd_dev) == -1)
+		return (NULL);
+	set_currdev(fn);
+	printf("Trying %s\n", fn);
+	if (sanity_check_currdev())
+		return (fn);
+	printf("Failed %s\n", fn);
+	free(fn);
+	return (NULL);
+}
+
+const char *
+hostdisk_gen_probe(void)
+{
+	hdinfo_t *hd, *md;
+	const char *rv = NULL;
+
+	STAILQ_FOREACH(hd, &hdinfo, hd_link) {
+		/* try whole disk */
+		if (hd->hd_flags & HDF_HAS_ZPOOL)
+			continue;
+		rv = hostdisk_try_one(hd);
+		if (rv != NULL)
+			return (rv);
+
+		/* try all partitions */
+		STAILQ_FOREACH(md, &hd->hd_children, hd_link) {
+			if (md->hd_flags & HDF_HAS_ZPOOL)
+				continue;
+			rv = hostdisk_try_one(md);
+			if (rv != NULL)
+				return (rv);
+		}
+	}
+	return (NULL);
+}
+
 #ifdef LOADER_ZFS_SUPPORT
 static bool
 hostdisk_zfs_check_one(hdinfo_t *hd)
@@ -520,19 +566,6 @@ hostdisk_zfs_probe(void)
 			hostdisk_zfs_check_one(md);
 		}
 	}
-}
-
-/* XXX refactor */
-static bool
-sanity_check_currdev(void)
-{
-	struct stat st;
-
-	return (stat(PATH_DEFAULTS_LOADER_CONF, &st) == 0 ||
-#ifdef PATH_BOOTABLE_TOKEN
-	    stat(PATH_BOOTABLE_TOKEN, &st) == 0 || /* non-standard layout */
-#endif
-	    stat(PATH_KERNEL, &st) == 0);
 }
 
 /* This likely shoud move to libsa/zfs/zfs.c and be used by at least EFI booting */
@@ -597,5 +630,4 @@ hostdisk_zfs_find_default(void)
 	}
 	return (false);
 }
-
 #endif

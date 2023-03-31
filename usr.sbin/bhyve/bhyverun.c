@@ -101,6 +101,7 @@ __FBSDID("$FreeBSD$");
 #include "pci_emul.h"
 #include "pci_irq.h"
 #include "pci_lpc.h"
+#include "qemu_fwcfg.h"
 #include "smbiostbl.h"
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
@@ -552,7 +553,7 @@ fbsdrun_start_thread(void *param)
 }
 
 static void
-fbsdrun_addcpu(struct vmctx *ctx, int newcpu, bool suspend)
+fbsdrun_addcpu(struct vmctx *ctx, int newcpu)
 {
 	int error;
 
@@ -562,8 +563,7 @@ fbsdrun_addcpu(struct vmctx *ctx, int newcpu, bool suspend)
 
 	CPU_SET_ATOMIC(newcpu, &cpumask);
 
-	if (suspend)
-		vm_suspend_cpu(ctx, newcpu);
+	vm_suspend_cpu(ctx, newcpu);
 
 	mt_vmm_info[newcpu].mt_ctx = ctx;
 	mt_vmm_info[newcpu].mt_vcpu = newcpu;
@@ -1138,7 +1138,7 @@ do_open(const char *vmname)
 }
 
 static void
-spinup_vcpu(struct vmctx *ctx, int vcpu, bool suspend)
+spinup_vcpu(struct vmctx *ctx, int vcpu)
 {
 	int error;
 
@@ -1154,7 +1154,7 @@ spinup_vcpu(struct vmctx *ctx, int vcpu, bool suspend)
 		assert(error == 0);
 	}
 
-	fbsdrun_addcpu(ctx, vcpu, suspend);
+	fbsdrun_addcpu(ctx, vcpu);
 }
 
 static bool
@@ -1232,12 +1232,13 @@ set_defaults(void)
 	set_config_bool("acpi_tables", false);
 	set_config_value("memory.size", "256M");
 	set_config_bool("x86.strictmsr", true);
+	set_config_value("lpc.fwcfg", "bhyve");
 }
 
 int
 main(int argc, char *argv[])
 {
-	int c, error, err;
+	int c, error;
 	int max_vcpus, memflags;
 	struct vmctx *ctx;
 	uint64_t rip;
@@ -1438,8 +1439,8 @@ main(int argc, char *argv[])
 	if (get_config_bool_default("memory.guest_in_core", false))
 		memflags |= VM_MEM_F_INCORE;
 	vm_set_memflags(ctx, memflags);
-	err = vm_setup_memory(ctx, memsize, VM_MMAP_ALL);
-	if (err) {
+	error = vm_setup_memory(ctx, memsize, VM_MMAP_ALL);
+	if (error) {
 		fprintf(stderr, "Unable to setup memory (%d)\n", errno);
 		exit(4);
 	}
@@ -1460,6 +1461,17 @@ main(int argc, char *argv[])
 
 	rtc_init(ctx);
 	sci_init(ctx);
+
+	if (qemu_fwcfg_init(ctx) != 0) {
+		fprintf(stderr, "qemu fwcfg initialization error");
+		exit(4);
+	}
+
+	if (qemu_fwcfg_add_file("opt/bhyve/hw.ncpu", sizeof(guest_ncpus),
+	    &guest_ncpus) != 0) {
+		fprintf(stderr, "Could not add qemu fwcfg opt/bhyve/hw.ncpu");
+		exit(4);
+	}
 
 	/*
 	 * Exit if a device emulation finds an error in its initialization
@@ -1486,6 +1498,16 @@ main(int argc, char *argv[])
 		}
 		error = vcpu_reset(ctx, BSP);
 		assert(error == 0);
+	}
+
+	/* Allocate per-VCPU resources. */
+	mt_vmm_info = calloc(guest_ncpus, sizeof(*mt_vmm_info));
+
+	/*
+	 * Add all vCPUs.
+	 */
+	for (int vcpu = 0; vcpu < guest_ncpus; vcpu++) {
+		spinup_vcpu(ctx, vcpu);
 	}
 
 #ifdef BHYVE_SNAPSHOT
@@ -1545,13 +1567,25 @@ main(int argc, char *argv[])
 		assert(error == 0);
 	}
 
-	if (lpc_bootrom())
+	if (lpc_bootrom() && strcmp(lpc_fwcfg(), "bhyve") == 0) {
 		fwctl_init();
+	}
 
 	/*
 	 * Change the proc title to include the VM name.
 	 */
 	setproctitle("%s", vmname);
+
+#ifdef BHYVE_SNAPSHOT
+	/* initialize mutex/cond variables */
+	init_snapshot();
+
+	/*
+	 * checkpointing thread for communication with bhyvectl
+	 */
+	if (init_checkpoint_thread(ctx) != 0)
+		errx(EX_OSERR, "Failed to start checkpoint thread");
+#endif
 
 #ifndef WITHOUT_CAPSICUM
 	caph_cache_catpages();
@@ -1564,36 +1598,19 @@ main(int argc, char *argv[])
 #endif
 
 #ifdef BHYVE_SNAPSHOT
-	if (restore_file != NULL)
+	if (restore_file != NULL) {
 		destroy_restore_state(&rstate);
+		if (vm_restore_time(ctx) < 0)
+			err(EX_OSERR, "Unable to restore time");
 
-	/* initialize mutex/cond variables */
-	init_snapshot();
-
-	/*
-	 * checkpointing thread for communication with bhyvectl
-	 */
-	if (init_checkpoint_thread(ctx) < 0)
-		printf("Failed to start checkpoint thread!\r\n");
-
-	if (restore_file != NULL)
-		vm_restore_time(ctx);
-#endif
-
-	/* Allocate per-VCPU resources. */
-	mt_vmm_info = calloc(guest_ncpus, sizeof(*mt_vmm_info));
-
-	/*
-	 * Add all vCPUs.
-	 */
-	for (int vcpu = 0; vcpu < guest_ncpus; vcpu++) {
-		bool suspend = (vcpu != BSP);
-#ifdef BHYVE_SNAPSHOT
-		if (restore_file != NULL)
-			suspend = false;
-#endif
-		spinup_vcpu(ctx, vcpu, suspend);
+		for (int i = 0; i < guest_ncpus; i++) {
+			if (i == BSP)
+				continue;
+			vm_resume_cpu(ctx, i);
+		}
 	}
+#endif
+	vm_resume_cpu(ctx, BSP);
 
 	/*
 	 * Head off to the main event dispatch loop
